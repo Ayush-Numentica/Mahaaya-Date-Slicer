@@ -35,7 +35,7 @@ export class Visual implements IVisual {
 
     // Reference to current data source for universal filtering
     private currentDataSource: powerbi.DataViewMetadataColumn | null = null;
-    
+
     // Flag to track when visual needs to re-render due to external changes
     private needsReRender: boolean = false;
 
@@ -44,19 +44,19 @@ export class Visual implements IVisual {
 
     // Flag to control when to apply filters (prevents interference with other slicers)
     private shouldApplyFilter: boolean = true;
-    
+
     // Flag to track if the current change is user-initiated (slider/calendar change)
     private isUserInitiatedChange: boolean = false;
-    
+
     // Flag to track if bookmark state is being restored (prevents override during restore)
     private isRestoringBookmark: boolean = false;
-    
+
     // Flag to track if preset just changed (ensures filter is applied in Desktop)
     private presetJustChanged: boolean = false;
-    
+
     // Flag to know when a Clear All slicers action was triggered externally
     private clearAllPending: boolean = false;
-    
+
     // Flag to track if user has manually selected dates (prevents preset from overriding manual selection)
     private hasManualSelection: boolean = false;
 
@@ -70,25 +70,25 @@ export class Visual implements IVisual {
         this.formattingSettingsService = new FormattingSettingsService();
         this.formattingSettings = new VisualFormattingSettingsModel();
         this.selectionManager = this.host.createSelectionManager();
-         // Right-click anywhere inside the visual to show the built-in context menu
+        // Right-click anywhere inside the visual to show the built-in context menu
         this.boundContextMenuHandler = (event: MouseEvent) => {
             event.preventDefault();
             this.selectionManager.showContextMenu(undefined, {
                 x: event.clientX,
                 y: event.clientY
             });
-            };
+        };
         this.target.addEventListener("contextmenu", this.boundContextMenuHandler);
-        
+
     }
 
     public update(options: VisualUpdateOptions): void {
 
-        
+
         // Detect environment
         const isService = typeof window !== 'undefined' && window.location && window.location.hostname.includes('app.powerbi.com');
         const environment = isService ? "Power BI Service" : "Power BI Desktop";
-        
+
         console.log("Visual update called with options:", {
             hasDataViews: !!(options.dataViews && options.dataViews[0]),
             dataViewCount: options.dataViews?.length || 0,
@@ -138,25 +138,37 @@ export class Visual implements IVisual {
                     }
                     this.lastDataHash = currentDataHash;
                 }
-                
+
                 // Parse values to Date[]
                 const parsedDates: Date[] = category.values
                     .map(v => this.parseToDate(v))
                     .filter((d): d is Date => d !== null && !isNaN(d.getTime()));
 
                 if (parsedDates.length > 0) {
-                let minDate = new Date(Math.min(...parsedDates.map(d => d.getTime())));
-                let maxDate = new Date(Math.max(...parsedDates.map(d => d.getTime())));
+                    let minDate = new Date(Math.min(...parsedDates.map(d => d.getTime())));
+                    let maxDate = new Date(Math.max(...parsedDates.map(d => d.getTime())));
 
-                const dataBoundMin = new Date(minDate.getTime());
-                const dataBoundMax = new Date(maxDate.getTime());
-                presetRangeForClear = this.calculatePresetRange(selectedPreset);
-                defaultRangeForClear = { from: new Date(dataBoundMin), to: new Date(dataBoundMax) };
+                    const dataBoundMin = new Date(minDate.getTime());
+                    const dataBoundMax = new Date(maxDate.getTime());
+                    presetRangeForClear = this.calculatePresetRange(selectedPreset);
+                    defaultRangeForClear = { from: new Date(dataBoundMin), to: new Date(dataBoundMax) };
 
-                // Persist the latest preset/default ranges for use in clear/bookmark paths.
-                this.presetRangeForClear = presetRangeForClear;
-                this.defaultRangeForClear = defaultRangeForClear;
-                    
+                    // Persist the latest preset/default ranges for use in clear/bookmark paths.
+                    this.presetRangeForClear = presetRangeForClear;
+                    this.defaultRangeForClear = defaultRangeForClear;
+
+                    // If a clear-all or bookmark restore is underway, force the live preset range
+                    // into the current selection so currentMin/Max reflect live dates (not bookmark dates).
+                    const isTimeBasedPresetForClear =
+                        selectedPreset &&
+                        ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(selectedPreset);
+                    if (this.clearAllPending && presetRangeForClear && isTimeBasedPresetForClear) {
+                        this.selectedMinDate = presetRangeForClear.from;
+                        this.selectedMaxDate = presetRangeForClear.to;
+                        this.hasManualSelection = false;
+                        this.needsReRender = true;
+                    }
+
                     console.log("Data received:", {
                         dateCount: parsedDates.length,
                         minDate: minDate.toISOString(),
@@ -170,7 +182,7 @@ export class Visual implements IVisual {
                     maxDate.setHours(23, 59, 59, 999);
 
                     // Check if data bounds changed (external slicer filtered the data)
-                const boundsChanged = (!this.dataMinDate || !this.dataMaxDate) ||
+                    const boundsChanged = (!this.dataMinDate || !this.dataMaxDate) ||
                         (this.dataMinDate.getTime() !== dataBoundMin.getTime() || this.dataMaxDate.getTime() !== dataBoundMax.getTime());
 
                     console.log("Bounds change detection:", {
@@ -185,8 +197,8 @@ export class Visual implements IVisual {
                     // Force bounds change detection in Desktop if data seems different
                     // Desktop sometimes doesn't trigger bounds change properly
                     if (!isService && !boundsChanged && this.dataMinDate && this.dataMaxDate) {
-                        const timeDiff = Math.abs(this.dataMinDate.getTime() - minDate.getTime()) + 
-                                       Math.abs(this.dataMaxDate.getTime() - maxDate.getTime());
+                        const timeDiff = Math.abs(this.dataMinDate.getTime() - minDate.getTime()) +
+                            Math.abs(this.dataMaxDate.getTime() - maxDate.getTime());
                         if (timeDiff > 1000) { // More than 1 second difference
                             console.log("Desktop: Forcing bounds change due to time difference:", timeDiff);
                             // Force the bounds change
@@ -206,14 +218,14 @@ export class Visual implements IVisual {
                             newMin: minDate.toISOString(),
                             newMax: maxDate.toISOString()
                         });
-                        
+
                         // Check if this is initial load (dataMinDate is null)
                         const isInitialLoad = !this.dataMinDate || !this.dataMaxDate;
-                        
+
                         // Update data bounds to reflect external slicer changes
                         this.dataMinDate = minDate;
                         this.dataMaxDate = maxDate;
-                        
+
                         // If we have a current selection, clamp it to new bounds
                         if (this.selectedMinDate && this.selectedMaxDate) {
                             const clampedMin = new Date(Math.max(this.selectedMinDate.getTime(), minDate.getTime()));
@@ -271,16 +283,16 @@ export class Visual implements IVisual {
                     // Also handle initial load when preset is set but lastPresetSetting is null
                     const isPresetChange = this.lastPresetSetting !== selectedPreset;
                     const isInitialPresetLoad = !this.lastPresetSetting && selectedPreset && selectedPreset !== "none";
-                    
+
                     if ((isPresetChange || isInitialPresetLoad) && !this.isRestoringBookmark) {
                         console.log("Preset changed from", this.lastPresetSetting, "to", selectedPreset);
                         this.dataMinDate = dataBoundMin;
                         this.dataMaxDate = dataBoundMax;
-                        
+
                         // Determine the date range based on preset
                         let presetSelectionMin: Date;
                         let presetSelectionMax: Date;
-                        
+
                         if (presetRangeForClear && selectedPreset && selectedPreset !== "none") {
                             // Use preset range
                             presetSelectionMin = presetRangeForClear.from;
@@ -292,14 +304,14 @@ export class Visual implements IVisual {
                             presetSelectionMax = dataBoundMax;
                             this.activePreset = null;
                         }
-                        
+
                         this.selectedMinDate = presetSelectionMin;
                         this.selectedMaxDate = presetSelectionMax;
                         this.lastPresetSetting = selectedPreset;
-                        
+
                         // Mark that preset just changed - this ensures filter is applied even in Desktop
                         this.presetJustChanged = true;
-                        
+
                         // Apply filter when preset changes (user-initiated action)
                         // This ensures the filter is applied immediately when preset changes in format pane
                         this.isUserInitiatedChange = true;
@@ -309,7 +321,7 @@ export class Visual implements IVisual {
                         // Reset manual selection flag when preset changes from format pane
                         // This allows preset to override any previous manual selection
                         this.hasManualSelection = false;
-                        
+
                         if (category?.source) {
                             console.log("Preset change - applying filter via updateSelectedDates", {
                                 preset: selectedPreset,
@@ -319,7 +331,7 @@ export class Visual implements IVisual {
                             // Always apply filter when preset changes from format pane
                             // Pass isPresetChange = true so it doesn't mark as manual selection
                             this.updateSelectedDates(presetSelectionMin, presetSelectionMax, category.source, true);
-                            
+
                             // Also apply filter directly here as backup for Desktop
                             // Desktop sometimes needs explicit filter application in the same update cycle
                             console.log("Preset change - applying filter directly as backup for Desktop");
@@ -340,20 +352,20 @@ export class Visual implements IVisual {
                             this.dataMinDate = dataBoundMin;
                             this.dataMaxDate = dataBoundMax;
                         }
-                        
+
                         // Check if preset is set and needs to be enforced
                         // This handles cases where preset is already set in format pane but selection doesn't match
                         // BUT only if user hasn't manually selected dates
                         if (presetRangeForClear && selectedPreset && selectedPreset !== "none" && !this.hasManualSelection) {
                             const presetMin = presetRangeForClear.from;
                             const presetMax = presetRangeForClear.to;
-                            
+
                             // Check if current selection doesn't match preset (or no selection exists)
-                            const selectionMismatch = !this.selectedMinDate || 
-                                                      !this.selectedMaxDate ||
-                                                      this.selectedMinDate.getTime() !== presetMin.getTime() ||
-                                                      this.selectedMaxDate.getTime() !== presetMax.getTime();
-                            
+                            const selectionMismatch = !this.selectedMinDate ||
+                                !this.selectedMaxDate ||
+                                this.selectedMinDate.getTime() !== presetMin.getTime() ||
+                                this.selectedMaxDate.getTime() !== presetMax.getTime();
+
                             if (selectionMismatch) {
                                 console.log("Preset is set but selection doesn't match - enforcing preset:", {
                                     preset: selectedPreset,
@@ -362,18 +374,18 @@ export class Visual implements IVisual {
                                     presetMin: presetMin.toISOString(),
                                     presetMax: presetMax.toISOString()
                                 });
-                                
+
                                 // Enforce preset range
                                 this.selectedMinDate = presetMin;
                                 this.selectedMaxDate = presetMax;
                                 this.activePreset = selectedPreset;
                                 this.lastPresetSetting = selectedPreset;
-                                
+
                                 // Apply filter to enforce preset
                                 this.presetJustChanged = true;
                                 this.isUserInitiatedChange = true;
                                 this.shouldApplyFilter = true;
-                                
+
                                 if (category?.source) {
                                     console.log("Enforcing preset - applying filter");
                                     // Pass isPresetChange = true so it doesn't mark as manual selection
@@ -381,7 +393,7 @@ export class Visual implements IVisual {
                                     // Also apply directly as backup for Desktop
                                     this.applyDateFilter(category.source, presetMin, presetMax);
                                 }
-                                
+
                                 setTimeout(() => {
                                     this.isUserInitiatedChange = false;
                                     this.presetJustChanged = false;
@@ -407,13 +419,13 @@ export class Visual implements IVisual {
                     if (presetRangeForClear && selectedPreset && selectedPreset !== "none" && !this.isRestoringBookmark && !this.hasManualSelection) {
                         const presetMin = presetRangeForClear.from;
                         const presetMax = presetRangeForClear.to;
-                        
+
                         // Check if selection doesn't match preset
-                        const needsEnforcement = !this.selectedMinDate || 
-                                                  !this.selectedMaxDate ||
-                                                  Math.abs(this.selectedMinDate.getTime() - presetMin.getTime()) > 1000 || // Allow 1 second tolerance
-                                                  Math.abs(this.selectedMaxDate.getTime() - presetMax.getTime()) > 1000;
-                        
+                        const needsEnforcement = !this.selectedMinDate ||
+                            !this.selectedMaxDate ||
+                            Math.abs(this.selectedMinDate.getTime() - presetMin.getTime()) > 1000 || // Allow 1 second tolerance
+                            Math.abs(this.selectedMaxDate.getTime() - presetMax.getTime()) > 1000;
+
                         if (needsEnforcement && this.lastPresetSetting === selectedPreset) {
                             // Preset is set but selection doesn't match - enforce it
                             // Only if user hasn't manually selected dates
@@ -424,16 +436,16 @@ export class Visual implements IVisual {
                                 presetMin: presetMin.toISOString(),
                                 presetMax: presetMax.toISOString()
                             });
-                            
+
                             this.selectedMinDate = presetMin;
                             this.selectedMaxDate = presetMax;
                             this.activePreset = selectedPreset;
-                            
+
                             // Mark for filter application
                             this.presetJustChanged = true;
                             this.isUserInitiatedChange = true;
                             this.shouldApplyFilter = true;
-                            
+
                             // Apply filter directly as backup for Desktop
                             if (category?.source) {
                                 console.log("General preset enforcement - applying filter directly");
@@ -492,7 +504,7 @@ export class Visual implements IVisual {
                         this.selectedMinDate &&
                         this.selectedMaxDate &&
                         (Math.abs(this.selectedMinDate.getTime() - presetRangeCurrent.from.getTime()) > 1000 ||
-                         Math.abs(this.selectedMaxDate.getTime() - presetRangeCurrent.to.getTime()) > 1000);
+                            Math.abs(this.selectedMaxDate.getTime() - presetRangeCurrent.to.getTime()) > 1000);
 
                     // Only override when the change is not user-initiated AND either:
                     //  - user has not made a manual selection, OR
@@ -531,6 +543,43 @@ export class Visual implements IVisual {
                         const externalFilterRange = this.getDateRangeFromFilters(incomingFilters, category.source);
                         const filtersCleared = !externalFilterRange;
 
+                        // Hard enforcement right before render: if coming from clear-all/bookmark and time-based preset,
+                        // align selection and filter with live preset range even if currentMin/Max differ.
+                        const isTimePresetNow =
+                            selectedPreset &&
+                            ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(selectedPreset);
+                        const enforceLivePresetForClear =
+                            this.clearAllPending &&
+                            isTimePresetNow &&
+                            !!presetRangeForClear &&
+                            this.selectedMinDate &&
+                            this.selectedMaxDate &&
+                            (Math.abs(this.selectedMinDate.getTime() - presetRangeForClear.from.getTime()) > 1000 ||
+                                Math.abs(this.selectedMaxDate.getTime() - presetRangeForClear.to.getTime()) > 1000);
+
+                        if (enforceLivePresetForClear) {
+                            console.log("Enforcing live preset after clear-all just before render", {
+                                preset: selectedPreset,
+                                liveMin: presetRangeForClear.from.toISOString(),
+                                liveMax: presetRangeForClear.to.toISOString(),
+                                currentMin: this.selectedMinDate.toISOString(),
+                                currentMax: this.selectedMaxDate.toISOString()
+                            });
+                            this.selectedMinDate = presetRangeForClear.from;
+                            this.selectedMaxDate = presetRangeForClear.to;
+                            this.hasManualSelection = false;
+                            this.shouldApplyFilter = true;
+                            this.isUserInitiatedChange = true;
+                            if (category?.source) {
+                                this.applyDateFilter(category.source, presetRangeForClear.from, presetRangeForClear.to);
+                            }
+                            // Prevent repeated enforcement on next cycle
+                            this.clearAllPending = false;
+                            setTimeout(() => {
+                                this.isUserInitiatedChange = false;
+                            }, 50);
+                        }
+
                         if (externalFilterRange && !this.isUserInitiatedChange && !this.isRestoringBookmark) {
                             // Don't override dates when restoring bookmark - let the bookmark restore logic handle it
                             const { minDate: externalMin, maxDate: externalMax } = externalFilterRange;
@@ -552,27 +601,139 @@ export class Visual implements IVisual {
                                 this.needsReRender = true;
                             }
                         } else if (externalFilterRange && this.isRestoringBookmark) {
-                            console.log("Skipping external filter override during bookmark restore");
-                        } else if (
-                            !this.isUserInitiatedChange &&
-                            filtersCleared &&
-                            this.dataMinDate &&
-                            this.dataMaxDate
-                        ) {
-                            if (!this.clearAllPending) {
-                                console.log("Clear all slicers detected - mirroring bookmark clear logic");
-                                this.clearAllPending = true;
-                                // Reuse bookmark clear pathway to ensure identical behaviour
-                                this.restoreBookmarkState({
-                                    isClearSelection: true,
-                                    // carry the preset name so we recalc using the live preset (today/yesterday/etc.)
-                                    lastPreset: this.lastPresetSetting || String(this.formattingSettings.presetsCard.preset.value)
-                                });
+                            // Power BI is trying to apply old filter dates from bookmark
+                            // We need to ignore these and recalculate based on current date for time-based presets
+                            console.log("Power BI attempting to apply old bookmark filter dates - will recalculate based on current date");
+                            
+                            // Check if we have a time-based preset that should be recalculated
+                            const currentPreset = this.lastPresetSetting || String(this.formattingSettings.presetsCard.preset.value);
+                            const timeBasedPresets = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"];
+                            const isTimeBased = currentPreset && timeBasedPresets.includes(currentPreset);
+                            
+                            if (isTimeBased) {
+                                // Recalculate preset based on CURRENT date, ignore Power BI's old dates
+                                const presetRange = this.calculatePresetRange(currentPreset);
+                                if (presetRange) {
+                                    console.log("Ignoring Power BI's old bookmark dates, using current date:", {
+                                        oldMinDate: externalFilterRange.minDate.toISOString(),
+                                        oldMaxDate: externalFilterRange.maxDate.toISOString(),
+                                        newMinDate: presetRange.from.toISOString(),
+                                        newMaxDate: presetRange.to.toISOString()
+                                    });
+                                    
+                                    this.selectedMinDate = presetRange.from;
+                                    this.selectedMaxDate = presetRange.to;
+                                    this.presetRangeForClear = presetRange;
+                                    this.hasManualSelection = false;
+                                    
+                                    // Apply the recalculated filter (not Power BI's old dates)
+                                    if (category?.source) {
+                                        this.shouldApplyFilter = true;
+                                        this.isUserInitiatedChange = true;
+                                        this.applyDateFilter(category.source, presetRange.from, presetRange.to);
+                                        setTimeout(() => {
+                                            this.isUserInitiatedChange = false;
+                                        }, 100);
+                                    }
+                                    
+                                    // Update React component with recalculated dates
+                                    if (this.reactSliderWrapper) {
+                                        this.reactSliderWrapper.updateDates(presetRange.from, presetRange.to, presetRange);
+                                    }
+                                }
+                            } else {
+                                // For non-time-based presets, still check if dates seem stale
+                                // If preset exists, prefer recalculating it
+                                if (currentPreset && currentPreset !== "none") {
+                                    const presetRange = this.calculatePresetRange(currentPreset);
+                                    if (presetRange) {
+                                        console.log("Recalculating non-time-based preset instead of using Power BI's old dates");
+                                        this.selectedMinDate = presetRange.from;
+                                        this.selectedMaxDate = presetRange.to;
+                                        this.presetRangeForClear = presetRange;
+                                        
+                                        if (category?.source) {
+                                            this.shouldApplyFilter = true;
+                                            this.isUserInitiatedChange = true;
+                                            this.applyDateFilter(category.source, presetRange.from, presetRange.to);
+                                            setTimeout(() => {
+                                                this.isUserInitiatedChange = false;
+                                            }, 100);
+                                        }
+                                        
+                                        if (this.reactSliderWrapper) {
+                                            this.reactSliderWrapper.updateDates(presetRange.from, presetRange.to, presetRange);
+                                        }
+                                    }
+                                }
                             }
-                            return;
+                        } else if (!this.isUserInitiatedChange && filtersCleared && this.dataMinDate && this.dataMaxDate) {
+                            // External "Clear all slicers" detected
+                            if (!this.clearAllPending) {
+                                console.log("Clear all slicers detected - resetting to preset or data bounds");
+                                this.clearAllPending = true;
+
+                                // Get the current preset
+                                const currentPreset = this.lastPresetSetting || String(this.formattingSettings.presetsCard.preset.value);
+
+                                // Recalculate preset range based on CURRENT date (for time-based presets)
+                                const presetRange = (currentPreset && currentPreset !== "none")
+                                    ? this.calculatePresetRange(currentPreset)
+                                    : null;
+
+                                if (presetRange) {
+                                    // Use recalculated preset range (LIVE dates for today/yesterday/etc)
+                                    this.selectedMinDate = presetRange.from;
+                                    this.selectedMaxDate = presetRange.to;
+                                    this.activePreset = currentPreset;
+                                    this.lastPresetSetting = currentPreset;
+                                    console.log("External clear - reset to preset:", currentPreset, {
+                                        liveMin: presetRange.from.toISOString(),
+                                        liveMax: presetRange.to.toISOString()
+                                    });
+                                } else {
+                                    // No preset - use full data bounds
+                                    this.selectedMinDate = this.dataMinDate;
+                                    this.selectedMaxDate = this.dataMaxDate;
+                                    this.activePreset = null;
+                                    console.log("External clear - reset to data bounds");
+                                }
+
+                                // Clear manual selection flag
+                                this.hasManualSelection = false;
+
+                                // Apply filter to other visuals
+                                if (category?.source) {
+                                    this.shouldApplyFilter = true;
+                                    this.isUserInitiatedChange = true;
+                                    this.applyDateFilter(category.source, this.selectedMinDate, this.selectedMaxDate);
+                                    setTimeout(() => {
+                                        this.isUserInitiatedChange = false;
+                                    }, 100);
+                                }
+
+                                // Mark for re-render
+                                this.needsReRender = true;
+
+                                // Immediately push updated dates into React props so currentMin/Max reflect the live preset
+                                if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+                                    this.reactSliderWrapper.updateDates(
+                                        this.selectedMinDate,
+                                        this.selectedMaxDate,
+                                        presetRangeForClear
+                                    );
+                                }
+
+                                // Clear the clearAllPending flag after processing
+                                setTimeout(() => {
+                                    this.clearAllPending = false;
+                                }, 200);
+                            }
+                            // CRITICAL: Don't return here - let code continue to renderDateCard()
                         } else {
                             this.clearAllPending = false;
                         }
+
 
                         // Apply filter if:
                         // 1. Preset just changed (highest priority - always apply filter for preset changes in Desktop/Service)
@@ -584,23 +745,23 @@ export class Visual implements IVisual {
                         // BUT NOT when filters were just cleared externally AND it's not user-initiated AND not preset change
                         // AND only if shouldApplyFilter is true (explicitly set based on context)
                         const shouldApply = this.shouldApplyFilter &&
-                                           this.selectedMinDate && 
-                                           this.selectedMaxDate &&
-                                           (this.presetJustChanged || // Preset change always applies filter - bypasses all other checks
-                                            (!boundsChanged || this.isUserInitiatedChange || this.isRestoringBookmark) && 
-                                            (this.isUserInitiatedChange || !filtersCleared || this.isRestoringBookmark));
-                        
+                            this.selectedMinDate &&
+                            this.selectedMaxDate &&
+                            (this.presetJustChanged || // Preset change always applies filter - bypasses all other checks
+                                (!boundsChanged || this.isUserInitiatedChange || this.isRestoringBookmark) &&
+                                (this.isUserInitiatedChange || !filtersCleared || this.isRestoringBookmark));
+
                         // For preset changes, force filter application even if other conditions might prevent it
                         // This is critical for Desktop where timing can be different
                         const forceApplyForPreset = this.presetJustChanged && this.selectedMinDate && this.selectedMaxDate;
-                        
+
                         // CRITICAL: If restoring bookmark and dates are set, ALWAYS apply filter
                         // This ensures filter is applied even if other conditions might prevent it
-                        const forceApplyForBookmark = this.isRestoringBookmark && 
-                                                      this.selectedMinDate && 
-                                                      this.selectedMaxDate && 
-                                                      this.shouldApplyFilter;
-                        
+                        const forceApplyForBookmark = this.isRestoringBookmark &&
+                            this.selectedMinDate &&
+                            this.selectedMaxDate &&
+                            this.shouldApplyFilter;
+
                         // Apply filter if conditions are met OR if preset just changed (force apply) OR if bookmark restore
                         if (shouldApply || forceApplyForPreset || forceApplyForBookmark) {
                             const filterMinDate = this.selectedMinDate;
@@ -618,7 +779,7 @@ export class Visual implements IVisual {
                                 filterMaxDate: filterMaxDate.toISOString()
                             });
                             this.applyDateFilter(category.source, filterMinDate, filterMaxDate);
-                            
+
                             // If this was a bookmark restore and filter is now applied, we can clear the flag
                             if (this.isRestoringBookmark) {
                                 // Filter applied successfully, clear the restore flag after a short delay
@@ -628,7 +789,7 @@ export class Visual implements IVisual {
                                     console.log("Bookmark restore completed - flags cleared");
                                 }, 100);
                             }
-                            
+
                             // If preset just changed and filter is now applied, clear the flag after a delay
                             // Keep it a bit longer to ensure Desktop update cycles can use it
                             if (this.presetJustChanged) {
@@ -663,7 +824,7 @@ export class Visual implements IVisual {
                             presetRangeForClear,
                             defaultRangeForClear
                         );
-                            
+
                         // Handle re-rendering after external filter changes
                         if (this.needsReRender && this.reactSliderWrapper) {
                             console.log("Re-rendering slider with new dates:", {
@@ -848,13 +1009,13 @@ export class Visual implements IVisual {
         // Mark this as a user-initiated change - filter MUST be applied
         this.isUserInitiatedChange = true;
         this.shouldApplyFilter = true;
-        
+
         // If this is a manual selection (not from preset change), mark it
         if (!isPresetChange) {
             this.hasManualSelection = true;
             console.log("Manual selection detected - preset will not override this");
         }
-        
+
         // Use provided source or current data source
         const dataSource = source || this.currentDataSource;
         if (dataSource) {
@@ -870,7 +1031,7 @@ export class Visual implements IVisual {
         if (this.reactSliderWrapper) {
             this.reactSliderWrapper.updateDates(normalizedMin, normalizedMax);
         }
-        
+
         // Reset the flag after a short delay to allow update cycle to complete
         setTimeout(() => {
             this.isUserInitiatedChange = false;
@@ -1019,339 +1180,172 @@ export class Visual implements IVisual {
 
         return null;
     }
-    
-
-//     private renderDateCard(
-        
-//         minDate: Date,
-//         maxDate: Date,
-//         minDateStr: string,
-//         maxDateStr: string,
-//         source: powerbi.DataViewMetadataColumn,
-//         presetRangeForClear?: { from: Date; to: Date } | null,
-//         defaultRangeForClear?: { from: Date; to: Date } | null
-//     ): void {
-
-//         const cardColor = (this.formattingSettings.dataPointCard.cardColor?.value?.value as string) || "#ffffff";
-
-//         this.target.innerHTML = "";
-
-//         const card = document.createElement("div");
-//         card.style.border = "1px solid #ccc";
-//         card.style.borderRadius = "8px";
-//         card.style.paddingTop="4px"
-//         card.style.paddingBottom="4px"
-//         // card.style.padding="0px"
-//         card.style.textAlign = "center";
-//         card.style.background = cardColor;
-//         card.style.fontFamily = "Segoe UI, sans-serif";
-
-
-//         const slicerHeader = !!this.formattingSettings.presetsCard.toShowHeader.value;
-
-//         if (slicerHeader) {
-//             const title = document.createElement("div");
-//             title.textContent = "Mahaaya Super Date Slicer";
-//             title.style.fontWeight = "bold";
-//             title.style.marginBottom = "5px";
-//             card.appendChild(title);
-//         }
-
-//         // Get formatting pane values
-//         const selectedStyle = this.formattingSettings.presetsCard.selectionStyle.value;
-//         const popupOnly = !!this.formattingSettings.presetsCard.toggleOption.value;
-
-//         if (popupOnly) {
-//             // Only show the dialog button when toggle is ON
-//             const calendarButton = document.createElement("button");
-//             calendarButton.textContent = "Open Calendar";
-//             calendarButton.style.marginTop = "10px";
-//             calendarButton.style.padding = "10px 14px";
-//             calendarButton.style.borderRadius = "10px";
-//             calendarButton.style.border = "1px solid #ccc";
-//             calendarButton.style.background = "#fff";
-//             calendarButton.style.cursor = "pointer";
-//             calendarButton.onclick = () => {
-//                 this.openDatePickerDialog(
-//                     this.selectedMinDate || minDate,
-//                     this.selectedMaxDate || maxDate,
-//                     minDate,
-//                     maxDate
-//                 );
-//             };
-//             card.appendChild(calendarButton);
-//         } else {
-//             // Render slider or inline calendar, based on selection style
-//             const rangeSliderContainer = document.createElement("div");
-//             rangeSliderContainer.className = "range-slider-container";
-
-//             if (this.reactSliderWrapper) {
-//                 this.reactSliderWrapper.destroy();
-//             }
-
-//             this.reactSliderWrapper = new ReactSliderWrapper(rangeSliderContainer);
-
-//             const inputFontSize = Number(this.formattingSettings.dataPointCard.fontSize.value) || 18;
-//             const inputFontColor = (this.formattingSettings.dataPointCard.fontColor?.value?.value as string) || "#000000";
-//             const inputBoxColor = (this.formattingSettings.dataPointCard.dateBoxColor?.value?.value as string) || "#ffffff";
-            
-            
-
-//             // CRITICAL: For time-based presets, ALWAYS prefer preset range over selectedMinDate
-//             // This is because preset range is recalculated on every render based on current date
-//             // selectedMinDate might be old (from bookmark or previous state)
-//             const selectedPreset = String(this.formattingSettings.presetsCard.preset.value);
-//             const isTimeBasedPreset = selectedPreset && selectedPreset !== "none" && 
-//                 ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(selectedPreset);
-            
-//             let currentMinToUse = this.selectedMinDate || minDate;
-//             let currentMaxToUse = this.selectedMaxDate || maxDate;
-            
-//             // For time-based presets with preset range available:
-//             // CRITICAL: If preset range differs from selectedMinDate, use preset range
-//             // This ensures we always use the recalculated (current) date, not old stored dates
-//             if (presetRangeForClear && isTimeBasedPreset) {
-//                 // Capture old dates BEFORE updating (for logging)
-//                 const oldSelectedMin = this.selectedMinDate?.toISOString();
-//                 const oldSelectedMax = this.selectedMaxDate?.toISOString();
-                
-//                 // Check if selectedMinDate differs from preset range (indicates old date)
-//                 const datesDiffer = !this.selectedMinDate || 
-//                                    !this.selectedMaxDate ||
-//                                    this.selectedMinDate.getTime() !== presetRangeForClear.from.getTime() ||
-//                                    this.selectedMaxDate.getTime() !== presetRangeForClear.to.getTime();
-                
-//                 // Use preset range if:
-//                 // 1. Restoring bookmark (always use recalculated)
-//                 // 2. No manual selection (use preset)
-//                 // 3. Dates differ (old date detected - use recalculated)
-//                 if (this.isRestoringBookmark || !this.hasManualSelection || datesDiffer) {
-//                     // Use preset range: it's recalculated based on current date
-//                     currentMinToUse = presetRangeForClear.from;
-//                     currentMaxToUse = presetRangeForClear.to;
-//                     // Update selectedMinDate/selectedMaxDate to match
-//                     this.selectedMinDate = presetRangeForClear.from;
-//                     this.selectedMaxDate = presetRangeForClear.to;
-//                     // console.log("✅ USING PRESET RANGE (time-based preset):", {
-//                     //     preset: selectedPreset,
-//                     //     presetMin: currentMinToUse.toISOString(),
-//                     //     presetMax: currentMaxToUse.toISOString(),
-//                     //     oldSelectedMin: oldSelectedMin,
-//                     //     oldSelectedMax: oldSelectedMax,
-//                     //     hasManualSelection: this.hasManualSelection,
-//                     //     isRestoringBookmark: this.isRestoringBookmark,
-//                     //     datesDiffer: datesDiffer,
-//                     //     reason: this.isRestoringBookmark ? "bookmark restore" : 
-//                     //            !this.hasManualSelection ? "no manual selection" : 
-//                     //            "dates differ (old date detected)"
-//                     // });
-
-//                     // IMPORTANT: mark this as NOT a manual selection and ensure other visuals get the filter
-//                     this.hasManualSelection = false;                       // preset now owns the dates
-//                     this.lastPresetSetting = selectedPreset || this.lastPresetSetting;
-//                     this.activePreset = selectedPreset || this.activePreset;
-
-//                     this.shouldApplyFilter = true;
-//                     this.isUserInitiatedChange = true;
-
-//                     // If we have the data source now, apply immediately so other visuals update
-//                     // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-//                     //     console.log("Applying recalculated preset filter to other visuals:", {
-//                     //         preset: selectedPreset,
-//                     //         min: this.selectedMinDate.toISOString(),
-//                     //         max: this.selectedMaxDate.toISOString()
-//                     //     });
-//                     //     // applyDateFilter should be idempotent / safe to call multiple times
-//                     //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-//                     // } else {
-//                     //     console.log("Preset filter will be applied on next update(): data source not ready yet");
-//                     // }
-
-//                     let minToApply: Date | null = this.selectedMinDate;
-// let maxToApply: Date | null = this.selectedMaxDate;
-
-// // Prefer recalculated preset range for time-based presets
-// if (this.presetRangeForClear) {
-//     minToApply = this.presetRangeForClear.from;
-//     maxToApply = this.presetRangeForClear.to;
-
-//     console.log("Using recalculated preset range for filter:", {
-//         preset: selectedPreset,
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString()
-//     });
-// }
-
-// if (this.currentDataSource && minToApply && maxToApply) {
-//     console.log("Applying recalculated preset filter to other visuals:", {
-//         preset: selectedPreset,
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString()
-//     });
-//     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
-// } else {
-//     console.log("Preset filter will be applied on next update(): data source not ready yet");
-// }
 
 
 
-//                 } else {
-//                     // Manual selection exists, not restoring, and dates match - preserve it
-//                     console.log("✅ USING MANUAL SELECTION (preserving user's date selection):", {
-//                         selectedMin: this.selectedMinDate?.toISOString(),
-//                         selectedMax: this.selectedMaxDate?.toISOString(),
-//                         hasManualSelection: true,
-//                         presetRangeAvailable: true,
-//                         presetMin: presetRangeForClear.from.toISOString(),
-//                         presetMax: presetRangeForClear.to.toISOString()
-//                     });
-//                 }
-//             } else {
-//                 // No preset range or not time-based - use selectedMinDate/selectedMaxDate
-//                 console.log("Using selectedMinDate/selectedMaxDate:", {
-//                     selectedMin: this.selectedMinDate?.toISOString(),
-//                     selectedMax: this.selectedMaxDate?.toISOString(),
-//                     hasPresetRange: !!presetRangeForClear,
-//                     isTimeBasedPreset: isTimeBasedPreset
-//                 });
-//             }
-            
-//             this.reactSliderWrapper.render({
-//                 minDate,
-//                 maxDate,
-//                 currentMinDate: currentMinToUse,
-//                 currentMaxDate: currentMaxToUse,
-//                 onDateChange: (newMinDate: Date, newMaxDate: Date) => {
-//                     this.updateSelectedDates(newMinDate, newMaxDate, source);
-//                 },
-//                 formatDateForSlider: this.formatDateForSlider.bind(this),
-//                 onOpenDialog: this.openDatePickerDialog.bind(this),
-//                 datePickerType: selectedStyle,
-//                 inputFontSize,
-//                 inputFontColor,
-//                 inputBoxColor,
-//                 presetRange: presetRangeForClear || null,
-//                 defaultRange: defaultRangeForClear || null
-//             });
+    private renderDateCard(
+        minDate: Date,
+        maxDate: Date,
+        minDateStr: string,
+        maxDateStr: string,
+        source: powerbi.DataViewMetadataColumn,
+        presetRangeForClear?: { from: Date; to: Date } | null,
+        defaultRangeForClear?: { from: Date; to: Date } | null
+    ): void {
 
-//             card.appendChild(rangeSliderContainer);
-//         }
+        this.target.innerHTML = "";
+        const card = document.createElement("div");
+        card.style.border = "1px solid #ccc";
+        card.style.borderRadius = "8px";
+        card.style.padding = "4px 0";
+        card.style.textAlign = "center";
+        card.style.background = (this.formattingSettings.dataPointCard.cardColor?.value?.value as string) || "#ffffff";
+        card.style.fontFamily = "Segoe UI, sans-serif";
 
-//         this.target.appendChild(card);
-//     }
-
-private renderDateCard(
-    minDate: Date,
-    maxDate: Date,
-    minDateStr: string,
-    maxDateStr: string,
-    source: powerbi.DataViewMetadataColumn,
-    presetRangeForClear?: { from: Date; to: Date } | null,
-    defaultRangeForClear?: { from: Date; to: Date } | null
-): void {
-
-    this.target.innerHTML = "";
-    const card = document.createElement("div");
-    card.style.border = "1px solid #ccc";
-    card.style.borderRadius = "8px";
-    card.style.padding = "4px 0";
-    card.style.textAlign = "center";
-    card.style.background = (this.formattingSettings.dataPointCard.cardColor?.value?.value as string) || "#ffffff";
-    card.style.fontFamily = "Segoe UI, sans-serif";
-
-    if (this.formattingSettings.presetsCard.toShowHeader.value) {
-        const title = document.createElement("div");
-        title.textContent = "Mahaaya Super Date Slicer";
-        title.style.fontWeight = "bold";
-        title.style.marginBottom = "5px";
-        card.appendChild(title);
-    }
-
-    const popupOnly = !!this.formattingSettings.presetsCard.toggleOption.value;
-    if (popupOnly) {
-        const calendarButton = document.createElement("button");
-        calendarButton.textContent = "Open Calendar";
-        calendarButton.style.marginTop = "10px";
-        calendarButton.style.padding = "10px 14px";
-        calendarButton.style.borderRadius = "10px";
-        calendarButton.style.border = "1px solid #ccc";
-        calendarButton.style.background = "#fff";
-        calendarButton.style.cursor = "pointer";
-        calendarButton.onclick = () => {
-            this.openDatePickerDialog(
-                this.selectedMinDate || minDate,
-                this.selectedMaxDate || maxDate,
-                minDate,
-                maxDate
-            );
-        };
-        card.appendChild(calendarButton);
-    } else {
-        const rangeSliderContainer = document.createElement("div");
-        rangeSliderContainer.className = "range-slider-container";
-
-        if (this.reactSliderWrapper) {
-            this.reactSliderWrapper.destroy();
+        if (this.formattingSettings.presetsCard.toShowHeader.value) {
+            const title = document.createElement("div");
+            title.textContent = "Mahaaya Super Date Slicer";
+            title.style.fontWeight = "bold";
+            title.style.marginBottom = "5px";
+            card.appendChild(title);
         }
 
-        this.reactSliderWrapper = new ReactSliderWrapper(rangeSliderContainer);
+        const popupOnly = !!this.formattingSettings.presetsCard.toggleOption.value;
+        if (popupOnly) {
+            const calendarButton = document.createElement("button");
+            calendarButton.textContent = "Open Calendar";
+            calendarButton.style.marginTop = "10px";
+            calendarButton.style.padding = "10px 14px";
+            calendarButton.style.borderRadius = "10px";
+            calendarButton.style.border = "1px solid #ccc";
+            calendarButton.style.background = "#fff";
+            calendarButton.style.cursor = "pointer";
+            calendarButton.onclick = () => {
+                this.openDatePickerDialog(
+                    this.selectedMinDate || minDate,
+                    this.selectedMaxDate || maxDate,
+                    minDate,
+                    maxDate
+                );
+            };
+            card.appendChild(calendarButton);
+        } else {
+            const rangeSliderContainer = document.createElement("div");
+            rangeSliderContainer.className = "range-slider-container";
 
-        const inputFontSize = Number(this.formattingSettings.dataPointCard.fontSize.value) || 18;
-        const inputFontColor = (this.formattingSettings.dataPointCard.fontColor?.value?.value as string) || "#000000";
-        const inputBoxColor = (this.formattingSettings.dataPointCard.dateBoxColor?.value?.value as string) || "#ffffff";
-
-        const selectedPreset = String(this.formattingSettings.presetsCard.preset.value);
-        const isTimeBasedPreset = selectedPreset && selectedPreset !== "none" &&
-            ["today","yesterday","last3days","last7Days","last30Days","thisMonth","lastMonth"].includes(selectedPreset);
-
-        let currentMinToUse = this.selectedMinDate || minDate;
-        let currentMaxToUse = this.selectedMaxDate || maxDate;
-
-        // --- Apply preset only once during bookmark restore ---
-        if (presetRangeForClear && isTimeBasedPreset && this.isRestoringBookmark && !this.hasManualSelection) {
-            currentMinToUse = presetRangeForClear.from;
-            currentMaxToUse = presetRangeForClear.to;
-            this.selectedMinDate = currentMinToUse;
-            this.selectedMaxDate = currentMaxToUse;
-
-            if (this.currentDataSource) {
-                this.applyDateFilter(this.currentDataSource, currentMinToUse, currentMaxToUse);
+            if (this.reactSliderWrapper) {
+                this.reactSliderWrapper.destroy();
             }
 
-            this.isRestoringBookmark = false; // done restoring
-        }
+            this.reactSliderWrapper = new ReactSliderWrapper(rangeSliderContainer);
 
-        // Slider / inline calendar
-        this.reactSliderWrapper.render({
-            minDate,
-            maxDate,
-            currentMinDate: currentMinToUse,
-            currentMaxDate: currentMaxToUse,
-            onDateChange: (newMinDate: Date, newMaxDate: Date) => {
-                // Mark as manual selection
-                this.hasManualSelection = true;
-                this.selectedMinDate = newMinDate;
-                this.selectedMaxDate = newMaxDate;
+            const inputFontSize = Number(this.formattingSettings.dataPointCard.fontSize.value) || 18;
+            const inputFontColor = (this.formattingSettings.dataPointCard.fontColor?.value?.value as string) || "#000000";
+            const inputBoxColor = (this.formattingSettings.dataPointCard.dateBoxColor?.value?.value as string) || "#ffffff";
+
+            const selectedPreset = String(this.formattingSettings.presetsCard.preset.value);
+            const isTimeBasedPreset = selectedPreset && selectedPreset !== "none" &&
+                ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(selectedPreset);
+
+            let currentMinToUse = this.selectedMinDate || minDate;
+            let currentMaxToUse = this.selectedMaxDate || maxDate;
+
+            console.log("currentMaxToUse", currentMaxToUse);
+            console.log("currentMinToUse", currentMinToUse);
+
+            // --- Prefer live preset range during clear/bookmark restore paths ---
+            // Use preset range when coming from clear-all/bookmark restore even if isRestoringBookmark already cleared.
+            const isClearOrBookmark = this.isRestoringBookmark || this.clearAllPending;
+
+            // Also check if presetRangeForClear differs from selectedMinDate/selectedMaxDate (external clear case)
+            // This ensures that when clearSelection() is called, we use the correct preset range even if selectedMinDate/selectedMaxDate
+            // still have old bookmark dates
+            const presetDiffersFromSelection = presetRangeForClear &&
+                this.selectedMinDate && this.selectedMaxDate &&
+                (Math.abs(this.selectedMinDate.getTime() - presetRangeForClear.from.getTime()) > 1000 ||
+                    Math.abs(this.selectedMaxDate.getTime() - presetRangeForClear.to.getTime()) > 1000);
+
+            // Apply preset range if: (1) clear/bookmark path, OR (2) preset differs from selection (external clear)
+            // For time-based presets, always prefer preset range during clear/bookmark
+            // For other presets, also check if preset differs from selection
+            const shouldUsePresetRange = presetRangeForClear &&
+                !this.hasManualSelection &&
+                ((isTimeBasedPreset && (isClearOrBookmark || presetDiffersFromSelection)) ||
+                    (!isTimeBasedPreset && presetDiffersFromSelection && selectedPreset && selectedPreset !== "none"));
+
+            if (shouldUsePresetRange) {
+                currentMinToUse = presetRangeForClear.from;
+                currentMaxToUse = presetRangeForClear.to;
+                this.selectedMinDate = currentMinToUse;
+                this.selectedMaxDate = currentMaxToUse;
+
+                // Also push the live dates into the display props so currentMin/Max reflect live, not bookmark dates.
+                minDate = presetRangeForClear.from < minDate ? presetRangeForClear.from : minDate;
+                maxDate = presetRangeForClear.to > maxDate ? presetRangeForClear.to : maxDate;
 
                 if (this.currentDataSource) {
-                    this.applyDateFilter(this.currentDataSource, newMinDate, newMaxDate);
+                    this.applyDateFilter(this.currentDataSource, currentMinToUse, currentMaxToUse);
                 }
-            },
-            formatDateForSlider: this.formatDateForSlider.bind(this),
-            onOpenDialog: this.openDatePickerDialog.bind(this),
-            datePickerType: this.formattingSettings.presetsCard.selectionStyle.value,
-            inputFontSize,
-            inputFontColor,
-            inputBoxColor,
-            presetRange: presetRangeForClear || null,
-            defaultRange: defaultRangeForClear || null
-        });
 
-        card.appendChild(rangeSliderContainer);
+                // Once applied, clear flags so subsequent updates behave normally
+                this.isRestoringBookmark = false;
+                this.clearAllPending = false;
+                this.hasManualSelection = false;
+            }
+
+            // Final safeguard: after external clear, if the live preset range differs from the current
+            // min/max being shown, force render/filter to the preset range (not the stale currentMin/Max).
+            const shouldForcePresetAfterClear =
+                this.clearAllPending &&
+                presetRangeForClear &&
+                isTimeBasedPreset &&
+                (Math.abs(currentMinToUse.getTime() - presetRangeForClear.from.getTime()) > 1000 ||
+                    Math.abs(currentMaxToUse.getTime() - presetRangeForClear.to.getTime()) > 1000);
+
+            if (shouldForcePresetAfterClear) {
+                currentMinToUse = presetRangeForClear.from;
+                currentMaxToUse = presetRangeForClear.to;
+                this.selectedMinDate = currentMinToUse;
+                this.selectedMaxDate = currentMaxToUse;
+                this.hasManualSelection = false;
+
+                // Ensure filter aligns with preset range
+                if (this.currentDataSource) {
+                    this.applyDateFilter(this.currentDataSource, currentMinToUse, currentMaxToUse);
+                }
+            }
+
+            // Slider / inline calendar
+            this.reactSliderWrapper.render({
+                minDate,
+                maxDate,
+                currentMinDate: currentMinToUse,
+                currentMaxDate: currentMaxToUse,
+                onDateChange: (newMinDate: Date, newMaxDate: Date) => {
+                    // Mark as manual selection
+                    this.hasManualSelection = true;
+                    this.selectedMinDate = newMinDate;
+                    this.selectedMaxDate = newMaxDate;
+
+                    if (this.currentDataSource) {
+                        this.applyDateFilter(this.currentDataSource, newMinDate, newMaxDate);
+                    }
+                },
+                formatDateForSlider: this.formatDateForSlider.bind(this),
+                onOpenDialog: this.openDatePickerDialog.bind(this),
+                datePickerType: this.formattingSettings.presetsCard.selectionStyle.value,
+                inputFontSize,
+                inputFontColor,
+                inputBoxColor,
+                presetRange: presetRangeForClear || null,
+                defaultRange: defaultRangeForClear || null
+            });
+
+            card.appendChild(rangeSliderContainer);
+        }
+
+        this.target.appendChild(card);
     }
-
-    this.target.appendChild(card);
-}
 
 
 
@@ -1389,7 +1383,7 @@ private renderDateCard(
         // Dialog size - width fixed at 800px, height at 92vh
         const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080;
         const dialogHeight = viewportHeight * 0.92;
-        
+
         const size = { width: 800, height: 460 };
         const dialogOptions = {
             actionButtons: dialogActionsButtons,
@@ -1449,579 +1443,628 @@ private renderDateCard(
     // 🔑 Bookmark support methods
     public getBookmarkState(): any {
         // Only persist the preset name; ranges are recalculated live on restore.
+        // Explicitly set dates to null to prevent Power BI from capturing old date values
         return {
             lastPreset: this.activePreset,
-            isClearSelection: false // Flag to indicate if this is a clear selection bookmark
+            isClearSelection: false, // Flag to indicate if this is a clear selection bookmark
+            selectedMinDate: null, // Explicitly null to prevent Power BI from capturing old dates
+            selectedMaxDate: null, // Explicitly null to prevent Power BI from capturing old dates
+            dataMinDate: null, // Explicitly null to prevent Power BI from capturing old data bounds
+            dataMaxDate: null  // Explicitly null to prevent Power BI from capturing old data bounds
         };
     }
 
-//     public restoreBookmarkState(state: any): void {
-//         console.log("Restoring bookmark state:", state);
-        
-//         // Set flag to prevent update cycle from overriding restored state
-//         this.isRestoringBookmark = true;
-        
-//         // CRITICAL EARLY CHECK: If bookmark has a time-based preset, recalculate IMMEDIATELY
-//         // This must happen BEFORE any dates are restored to prevent old dates from being set
-//         // Check multiple sources: state.lastPreset, this.activePreset, format pane
-//         const presetFromBookmark = state?.lastPreset;
-//         const presetFromActive = this.activePreset;
-//         const presetFromFormatPane = String(this.formattingSettings.presetsCard.preset.value);
-//         const detectedPreset = presetFromBookmark || presetFromActive || (presetFromFormatPane !== "none" ? presetFromFormatPane : null);
-        
-//         if (detectedPreset && detectedPreset !== "none") {
-//             const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(detectedPreset);
-//             if (isTimeBased) {
-//                 console.log("EARLY CHECK: Time-based preset detected - recalculating BEFORE any date restore:", {
-//                     preset: detectedPreset,
-//                     source: presetFromBookmark ? "bookmark" : presetFromActive ? "activePreset" : "formatPane",
-//                     storedDates: {
-//                         min: state?.selectedMinDate,
-//                         max: state?.selectedMaxDate
-//                     },
-//                     willRecalculate: true,
-//                     currentDate: new Date().toISOString()
-//                 });
-//                 this.lastPresetSetting = detectedPreset;
-//                 this.activePreset = detectedPreset;
-                
-//                 // CRITICAL: Reset manual selection flag - clear filter means we're going back to preset
-//                 this.hasManualSelection = false;
-                
-//                 // CRITICAL: Calculate preset range IMMEDIATELY and update selectedMinDate/selectedMaxDate
-//                 // This must happen BEFORE any rendering to ensure correct dates are used
-//                 const presetRange = this.calculatePresetRange(detectedPreset);
-//                 if (presetRange) {
-//                     this.selectedMinDate = presetRange.from;
-//                     this.selectedMaxDate = presetRange.to;
-//                     console.log("IMMEDIATELY updated selectedMinDate/selectedMaxDate with recalculated preset:", {
-//                         preset: detectedPreset,
-//                         newMin: this.selectedMinDate.toISOString(),
-//                         newMax: this.selectedMaxDate.toISOString(),
-//                         hasManualSelection: this.hasManualSelection
-//                     });
-//                 }
-                
-//                 // Also call clearSelectionWithCurrentData to ensure everything is consistent
-//                 this.clearSelectionWithCurrentData();
-                
-//                 // CRITICAL: Ensure filter is applied to other visuals
-//                 // clearSelectionWithCurrentData applies filter, but if currentDataSource wasn't available,
-//                 // we need to ensure it gets applied when update() runs
-//                 // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-//                 //     console.log("Early check - applying filter to other visuals:", {
-//                 //         min: this.selectedMinDate.toISOString(),
-//                 //         max: this.selectedMaxDate.toISOString()
-//                 //     });
-//                 //     this.shouldApplyFilter = true;
-//                 //     this.isUserInitiatedChange = true;
-//                 //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-//                 // } else {
-//                 //     console.log("Early check - data source not available yet, filter will be applied in update()");
-//                 //     // Mark that we need to apply filter when update() runs
-//                 //     this.shouldApplyFilter = true;
-//                 //     this.isUserInitiatedChange = true;
-//                 // }
+
+
+    //         // Set flag to prevent update cycle from overriding restored state
+    //         this.isRestoringBookmark = true;
+
+    //         // CRITICAL EARLY CHECK: If bookmark has a time-based preset, recalculate IMMEDIATELY
+    //         // This must happen BEFORE any dates are restored to prevent old dates from being set
+    //         // Check multiple sources: state.lastPreset, this.activePreset, format pane
+    //         const presetFromBookmark = state?.lastPreset;
+    //         const presetFromActive = this.activePreset;
+    //         const presetFromFormatPane = String(this.formattingSettings.presetsCard.preset.value);
+    //         const detectedPreset = presetFromBookmark || presetFromActive || (presetFromFormatPane !== "none" ? presetFromFormatPane : null);
+
+    //         if (detectedPreset && detectedPreset !== "none") {
+    //             const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(detectedPreset);
+    //             if (isTimeBased) {
+    //                 console.log("EARLY CHECK: Time-based preset detected - recalculating BEFORE any date restore:", {
+    //                     preset: detectedPreset,
+    //                     source: presetFromBookmark ? "bookmark" : presetFromActive ? "activePreset" : "formatPane",
+    //                     storedDates: {
+    //                         min: state?.selectedMinDate,
+    //                         max: state?.selectedMaxDate
+    //                     },
+    //                     willRecalculate: true,
+    //                     currentDate: new Date().toISOString()
+    //                 });
+    //                 this.lastPresetSetting = detectedPreset;
+    //                 this.activePreset = detectedPreset;
+
+    //                 // CRITICAL: Reset manual selection flag - clear filter means we're going back to preset
+    //                 this.hasManualSelection = false;
+
+    //                 // CRITICAL: Calculate preset range IMMEDIATELY and update selectedMinDate/selectedMaxDate
+    //                 // This must happen BEFORE any rendering to ensure correct dates are used
+    //                 const presetRange = this.calculatePresetRange(detectedPreset);
+    //                 if (presetRange) {
+    //                     this.selectedMinDate = presetRange.from;
+    //                     this.selectedMaxDate = presetRange.to;
+    //                     console.log("IMMEDIATELY updated selectedMinDate/selectedMaxDate with recalculated preset:", {
+    //                         preset: detectedPreset,
+    //                         newMin: this.selectedMinDate.toISOString(),
+    //                         newMax: this.selectedMaxDate.toISOString(),
+    //                         hasManualSelection: this.hasManualSelection
+    //                     });
+    //                 }
+
+    //                 // Also call clearSelectionWithCurrentData to ensure everything is consistent
+    //                 this.clearSelectionWithCurrentData();
+
+    //                 // CRITICAL: Ensure filter is applied to other visuals
+    //                 // clearSelectionWithCurrentData applies filter, but if currentDataSource wasn't available,
+    //                 // we need to ensure it gets applied when update() runs
+    //                 // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
+    //                 //     console.log("Early check - applying filter to other visuals:", {
+    //                 //         min: this.selectedMinDate.toISOString(),
+    //                 //         max: this.selectedMaxDate.toISOString()
+    //                 //     });
+    //                 //     this.shouldApplyFilter = true;
+    //                 //     this.isUserInitiatedChange = true;
+    //                 //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
+    //                 // } else {
+    //                 //     console.log("Early check - data source not available yet, filter will be applied in update()");
+    //                 //     // Mark that we need to apply filter when update() runs
+    //                 //     this.shouldApplyFilter = true;
+    //                 //     this.isUserInitiatedChange = true;
+    //                 // }
 
 
 
-//                 let minToApply: Date | null = this.selectedMinDate;
-// let maxToApply: Date | null = this.selectedMaxDate;
+    //                 let minToApply: Date | null = this.selectedMinDate;
+    // let maxToApply: Date | null = this.selectedMaxDate;
 
-// // If a recalculated preset exists (for time-based preset), use it instead of stored dates
-// if (this.presetRangeForClear) {
-//     minToApply = this.presetRangeForClear.from;
-//     maxToApply = this.presetRangeForClear.to;
+    // // If a recalculated preset exists (for time-based preset), use it instead of stored dates
+    // if (this.presetRangeForClear) {
+    //     minToApply = this.presetRangeForClear.from;
+    //     maxToApply = this.presetRangeForClear.to;
 
-//     console.log("Early check - using recalculated preset range for filter:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString(),
-//         preset: this.activePreset
-//     });
-// }
+    //     console.log("Early check - using recalculated preset range for filter:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString(),
+    //         preset: this.activePreset
+    //     });
+    // }
 
-// if (this.currentDataSource && minToApply && maxToApply) {
-//     console.log("Early check - applying filter to other visuals:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString()
-//     });
+    // if (this.currentDataSource && minToApply && maxToApply) {
+    //     console.log("Early check - applying filter to other visuals:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString()
+    //     });
 
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
 
-//     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
-// } else {
-//     console.log("Early check - data source not available yet, filter will be applied in update()");
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
-// }
-
-                
-//                 // Update React component immediately with recalculated dates
-//                 if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
-//                     console.log("Updating React component with recalculated dates:", {
-//                         min: this.selectedMinDate.toISOString(),
-//                         max: this.selectedMaxDate.toISOString()
-//                     });
-//                     this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
-//                 }
-//                 setTimeout(() => {
-//                     this.isRestoringBookmark = false;
-//                     this.isUserInitiatedChange = false;
-//                 }, 300);
-//                 return; // Return early - never restore old dates
-//             }
-//         }
-        
-//         // Check if this is a clear selection bookmark
-//         if (state && state.isClearSelection === true) {
-//             console.log("Clear selection bookmark detected - recalculating preset based on current data");
-//             // CRITICAL: Reset manual selection flag - clear filter means we're going back to preset
-//             this.hasManualSelection = false;
-            
-//             // CRITICAL FIX: Set lastPresetSetting from bookmark state BEFORE calling clearSelectionWithCurrentData
-//             // This ensures clearSelectionWithCurrentData uses the correct preset from the bookmark
-//             if (state.lastPreset && state.lastPreset !== "none") {
-//                 this.lastPresetSetting = state.lastPreset;
-//                 this.activePreset = state.lastPreset;
-//                 console.log("Clear selection - preset from bookmark:", state.lastPreset);
-//             } else {
-//                 // Fallback to format pane preset if bookmark doesn't have preset
-//                 const formatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
-//                 if (formatPanePreset && formatPanePreset !== "none") {
-//                     this.lastPresetSetting = formatPanePreset;
-//                     this.activePreset = formatPanePreset;
-//                     console.log("Clear selection - using format pane preset:", formatPanePreset);
-//                 }
-
-//             }
-//             // When clearing, always recalculate preset based on CURRENT date and CURRENT data bounds
-//             // This ensures that for live data, "last 3 days" means the latest 3 days, not old dates
-//             this.clearSelectionWithCurrentData();
-            
-//             // CRITICAL: Ensure filter is applied to other visuals
-//             // clearSelectionWithCurrentData applies filter, but ensure it's applied here too
-//             // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-//             //     console.log("Clear selection - applying filter to other visuals:", {
-//             //         min: this.selectedMinDate.toISOString(),
-//             //         max: this.selectedMaxDate.toISOString()
-//             //     });
-//             //     this.shouldApplyFilter = true;
-//             //     this.isUserInitiatedChange = true;
-//             //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-//             // } else {
-//             //     console.log("Clear selection - data source not available yet, filter will be applied in update()");
-//             //     // Mark that we need to apply filter when update() runs
-//             //     this.shouldApplyFilter = true;
-//             //     this.isUserInitiatedChange = true;
-//             // }
+    //     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
+    // } else {
+    //     console.log("Early check - data source not available yet, filter will be applied in update()");
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
+    // }
 
 
-//             let minToApply: Date | null = null;
-// let maxToApply: Date | null = null;
+    //                 // Update React component immediately with recalculated dates
+    //                 if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+    //                     console.log("Updating React component with recalculated dates:", {
+    //                         min: this.selectedMinDate.toISOString(),
+    //                         max: this.selectedMaxDate.toISOString()
+    //                     });
+    //                     this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
+    //                 }
+    //                 setTimeout(() => {
+    //                     this.isRestoringBookmark = false;
+    //                     this.isUserInitiatedChange = false;
+    //                 }, 300);
+    //                 return; // Return early - never restore old dates
+    //             }
+    //         }
 
-// // If clear selection triggered a preset recalculation → use dynamic preset range
-// if (this.presetRangeForClear) {
-//     minToApply = this.presetRangeForClear.from;
-//     maxToApply = this.presetRangeForClear.to;
+    //         // Check if this is a clear selection bookmark
+    //         if (state && state.isClearSelection === true) {
+    //             console.log("Clear selection bookmark detected - recalculating preset based on current data");
+    //             // CRITICAL: Reset manual selection flag - clear filter means we're going back to preset
+    //             this.hasManualSelection = false;
 
-//     console.log("Clear selection - using dynamic preset range:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString(),
-//         preset: this.activePreset
-//     });
-// } else {
-//     // fallback (manual selection or non-preset)
-//     minToApply = this.selectedMinDate;
-//     maxToApply = this.selectedMaxDate;
-// }
+    //             // CRITICAL FIX: Set lastPresetSetting from bookmark state BEFORE calling clearSelectionWithCurrentData
+    //             // This ensures clearSelectionWithCurrentData uses the correct preset from the bookmark
+    //             if (state.lastPreset && state.lastPreset !== "none") {
+    //                 this.lastPresetSetting = state.lastPreset;
+    //                 this.activePreset = state.lastPreset;
+    //                 console.log("Clear selection - preset from bookmark:", state.lastPreset);
+    //             } else {
+    //                 // Fallback to format pane preset if bookmark doesn't have preset
+    //                 const formatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
+    //                 if (formatPanePreset && formatPanePreset !== "none") {
+    //                     this.lastPresetSetting = formatPanePreset;
+    //                     this.activePreset = formatPanePreset;
+    //                     console.log("Clear selection - using format pane preset:", formatPanePreset);
+    //                 }
 
-// if (this.currentDataSource && minToApply && maxToApply) {
-//     console.log("Clear selection - applying filter to other visuals:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString()
-//     });
+    //             }
+    //             // When clearing, always recalculate preset based on CURRENT date and CURRENT data bounds
+    //             // This ensures that for live data, "last 3 days" means the latest 3 days, not old dates
+    //             this.clearSelectionWithCurrentData();
 
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
-
-//     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
-// } else {
-//     console.log("Clear selection - data source not available yet, filter will be applied in update()");
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
-// }
-
-            
-//             // Update React component immediately with recalculated dates
-//             if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
-//                 console.log("Clear selection - updating React component with recalculated dates:", {
-//                     min: this.selectedMinDate.toISOString(),
-//                     max: this.selectedMaxDate.toISOString(),
-//                     hasManualSelection: this.hasManualSelection
-//                 });
-//                 this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
-//             }
-//             setTimeout(() => {
-//                 this.isRestoringBookmark = false;
-//                 this.isUserInitiatedChange = false;
-//             }, 300);
-//             return;
-//         }
-        
-//         // Check if recalculate preset on bookmark is enabled
-//         const recalculatePreset = this.formattingSettings.presetsCard.recalculatePresetOnBookmark.value;
-//         const bookmarkState = state;
-        
-//         // CRITICAL FIX: For time-based presets, ALWAYS recalculate based on CURRENT date
-//         // This ensures "yesterday" means today's yesterday, not the date from when bookmark was created
-        
-//         // First, try to get preset from bookmark state
-//         let presetToUse: string | null = null;
-//         if (bookmarkState && bookmarkState.lastPreset && bookmarkState.lastPreset !== "none") {
-//             presetToUse = bookmarkState.lastPreset;
-//             console.log("Bookmark restore - preset from bookmark state:", presetToUse);
-//         } else {
-//             // Fallback: Check if current format pane has a time-based preset set
-//             // This handles cases where bookmark state might not have stored the preset correctly
-//             const currentFormatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
-//             if (currentFormatPanePreset && currentFormatPanePreset !== "none") {
-//                 const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(currentFormatPanePreset);
-//                 if (isTimeBased) {
-//                     presetToUse = currentFormatPanePreset;
-//                     console.log("Bookmark restore - using format pane preset as fallback:", presetToUse);
-//                 }
-//             }
-//         }
-        
-//         // If we have a preset, check if it's time-based and should be recalculated
-//         if (presetToUse) {
-//             const isTimeBasedPreset = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(presetToUse);
-            
-//             console.log("Bookmark restore - preset analysis:", {
-//                 preset: presetToUse,
-//                 isTimeBasedPreset: isTimeBasedPreset,
-//                 recalculateEnabled: recalculatePreset,
-//                 willRecalculate: isTimeBasedPreset || recalculatePreset
-//             });
-            
-//             // For time-based presets, ALWAYS recalculate (they should be dynamic)
-//             // For data-bound presets (minDate, maxDate), respect the recalculatePresetOnBookmark setting
-//             if (isTimeBasedPreset || recalculatePreset) {
-//                 console.log("Recalculating preset on bookmark restore:", {
-//                     preset: presetToUse,
-//                     isTimeBasedPreset: isTimeBasedPreset,
-//                     recalculateEnabled: recalculatePreset,
-//                     currentDate: new Date().toISOString(),
-//                     storedMinDate: bookmarkState?.selectedMinDate,
-//                     storedMaxDate: bookmarkState?.selectedMaxDate
-//                 });
-                
-//                 // Restore the preset setting so clearSelectionWithCurrentData uses it
-//                 this.activePreset = presetToUse;
-//                 this.lastPresetSetting = presetToUse;
-                
-//                 // IMPORTANT: Don't restore the old dates - let clearSelectionWithCurrentData calculate fresh dates
-//                 // This ensures "yesterday" means today's yesterday, not the date from when bookmark was created
-                
-//                 // Call clearSelectionWithCurrentData which will recalculate the preset based on CURRENT data
-//                 this.clearSelectionWithCurrentData();
-                
-//                 setTimeout(() => {
-//                     this.isRestoringBookmark = false;
-//                 }, 300);
-//                 return; // CRITICAL: Return here to prevent restoring old dates below
-//             } else {
-//                 console.log("Preset found but not recalculating (data-bound preset with recalculate disabled):", {
-//                     preset: presetToUse
-//                 });
-//             }
-//         } else {
-//             console.log("No preset found in bookmark state or format pane:", {
-//                 hasBookmarkState: !!bookmarkState,
-//                 bookmarkLastPreset: bookmarkState?.lastPreset,
-//                 formatPanePreset: String(this.formattingSettings.presetsCard.preset.value)
-//             });
-            
-//             // SAFEGUARD: Even if preset wasn't detected above, check format pane for time-based preset
-//             // This ensures we don't restore old dates for time-based presets
-//             const formatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
-//             if (formatPanePreset && formatPanePreset !== "none") {
-//                 const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(formatPanePreset);
-//                 if (isTimeBased) {
-//                     console.log("Safeguard: Format pane has time-based preset, recalculating:", formatPanePreset);
-//                     this.lastPresetSetting = formatPanePreset;
-//                     this.activePreset = formatPanePreset;
-//                     this.clearSelectionWithCurrentData();
-//                     setTimeout(() => {
-//                         this.isRestoringBookmark = false;
-//                     }, 300);
-//                     return; // Don't restore old dates
-//                 }
-//             }
-//         }
-        
-        
-//         // CRITICAL SAFEGUARD: Before restoring ANY dates, check if bookmark has a time-based preset
-//         // If it does, we MUST recalculate instead of restoring old dates
-//         // This ensures that bookmarks with preset names always use current date, not stored dates
-//         if (bookmarkState?.lastPreset && bookmarkState.lastPreset !== "none") {
-//             const isTimeBasedPreset = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(bookmarkState.lastPreset);
-//             if (isTimeBasedPreset) {
-//                 console.log("CRITICAL: Bookmark has time-based preset - IGNORING stored dates and recalculating:", {
-//                     preset: bookmarkState.lastPreset,
-//                     storedDates: {
-//                         min: bookmarkState.selectedMinDate,
-//                         max: bookmarkState.selectedMaxDate
-//                     },
-//                     willRecalculate: true,
-//                     currentDate: new Date().toISOString()
-//                 });
-//                 this.lastPresetSetting = bookmarkState.lastPreset;
-//                 this.activePreset = bookmarkState.lastPreset;
-//                 this.clearSelectionWithCurrentData();
-//                 setTimeout(() => {
-//                     this.isRestoringBookmark = false;
-//                 }, 300);
-//                 return; // NEVER restore old dates for time-based presets - always recalculate
-//             }
-//         }
-        
-//         // Restore dates from bookmark state
-//         // NOTE: This will only execute if preset is NOT time-based or preset recalculation was skipped
-//         // For time-based presets, we should have returned above
-//         if (bookmarkState.selectedMinDate) {
-//             this.selectedMinDate = new Date(bookmarkState.selectedMinDate);
-//         }
-//         if (bookmarkState.selectedMaxDate) {
-//             this.selectedMaxDate = new Date(bookmarkState.selectedMaxDate);
-//         }
-//         if (bookmarkState.dataMinDate) {
-//             this.dataMinDate = new Date(bookmarkState.dataMinDate);
-//         }
-//         if (bookmarkState.dataMaxDate) {
-//             this.dataMaxDate = new Date(bookmarkState.dataMaxDate);
-//         }
-//         if (bookmarkState.lastPreset) {
-//             this.activePreset = bookmarkState.lastPreset;
-//             this.lastPresetSetting = bookmarkState.lastPreset;
-//         }
-
-//         // Apply the restored filter if we have a data source
-//         // Note: currentDataSource might not be set yet if update hasn't run
-//         // The filter will be applied when update runs if currentDataSource becomes available
-//         // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-//         //     this.shouldApplyFilter = true;
-//         //     this.isUserInitiatedChange = true;
-//         //     console.log("Applying filter from bookmark restore:", {
-//         //         min: this.selectedMinDate.toISOString(),
-//         //         max: this.selectedMaxDate.toISOString()
-//         //     });
-//         //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-//         //     setTimeout(() => {
-//         //         this.isUserInitiatedChange = false;
-//         //     }, 100);
-//         // } else {
-//         //     // Data source not available yet - mark that we need to apply filter when update runs
-//         //     console.log("Bookmark restored but data source not available yet - will apply filter on next update");
-//         //     this.shouldApplyFilter = true;
-//         //     this.isUserInitiatedChange = true;
-//         // }
+    //             // CRITICAL: Ensure filter is applied to other visuals
+    //             // clearSelectionWithCurrentData applies filter, but ensure it's applied here too
+    //             // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
+    //             //     console.log("Clear selection - applying filter to other visuals:", {
+    //             //         min: this.selectedMinDate.toISOString(),
+    //             //         max: this.selectedMaxDate.toISOString()
+    //             //     });
+    //             //     this.shouldApplyFilter = true;
+    //             //     this.isUserInitiatedChange = true;
+    //             //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
+    //             // } else {
+    //             //     console.log("Clear selection - data source not available yet, filter will be applied in update()");
+    //             //     // Mark that we need to apply filter when update() runs
+    //             //     this.shouldApplyFilter = true;
+    //             //     this.isUserInitiatedChange = true;
+    //             // }
 
 
-//         let minToApply: Date | null = null;
-// let maxToApply: Date | null = null;
+    //             let minToApply: Date | null = null;
+    // let maxToApply: Date | null = null;
 
-// // If we came from a bookmark AND you have dynamic preset range recalculated
-// if (this.isRestoringBookmark && this.presetRangeForClear) {
-//     minToApply = this.presetRangeForClear.from;
-//     maxToApply = this.presetRangeForClear.to;
+    // // If clear selection triggered a preset recalculation → use dynamic preset range
+    // if (this.presetRangeForClear) {
+    //     minToApply = this.presetRangeForClear.from;
+    //     maxToApply = this.presetRangeForClear.to;
 
-//     console.log("Using dynamic preset range after bookmark restore:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString(),
-//         preset: this.activePreset
-//     });
-// } else {
-//     // Normal behavior (manual selection or normal slider change)
-//     minToApply = this.selectedMinDate;
-//     maxToApply = this.selectedMaxDate;
-// }
+    //     console.log("Clear selection - using dynamic preset range:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString(),
+    //         preset: this.activePreset
+    //     });
+    // } else {
+    //     // fallback (manual selection or non-preset)
+    //     minToApply = this.selectedMinDate;
+    //     maxToApply = this.selectedMaxDate;
+    // }
 
-// if (this.currentDataSource && minToApply && maxToApply) {
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
+    // if (this.currentDataSource && minToApply && maxToApply) {
+    //     console.log("Clear selection - applying filter to other visuals:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString()
+    //     });
 
-//     console.log("Applying filter:", {
-//         min: minToApply.toISOString(),
-//         max: maxToApply.toISOString()
-//     });
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
 
-//     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
-
-//     setTimeout(() => {
-//         this.isUserInitiatedChange = false;
-//     }, 100);
-// } else {
-//     console.log("Data source not ready – will apply filter on next update");
-//     this.shouldApplyFilter = true;
-//     this.isUserInitiatedChange = true;
-// }
+    //     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
+    // } else {
+    //     console.log("Clear selection - data source not available yet, filter will be applied in update()");
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
+    // }
 
 
-//         // Update React component if it exists
-//         if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
-//             this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
-//         }
+    //             // Update React component immediately with recalculated dates
+    //             if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+    //                 console.log("Clear selection - updating React component with recalculated dates:", {
+    //                     min: this.selectedMinDate.toISOString(),
+    //                     max: this.selectedMaxDate.toISOString(),
+    //                     hasManualSelection: this.hasManualSelection
+    //                 });
+    //                 this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
+    //             }
+    //             setTimeout(() => {
+    //                 this.isRestoringBookmark = false;
+    //                 this.isUserInitiatedChange = false;
+    //             }, 300);
+    //             return;
+    //         }
 
-//         // Force re-render to show restored state
-//         this.needsReRender = true;
-        
-//         // Safety timeout to clear the flag if update cycle doesn't run
-//         // The update cycle will clear it earlier if it applies the filter
-//         setTimeout(() => {
-//             if (this.isRestoringBookmark) {
-//                 this.isRestoringBookmark = false;
-//                 this.isUserInitiatedChange = false;
-//                 console.log("Bookmark restore flag cleared by safety timeout");
-//             }
-//         }, 500);
-//     }
+    //         // Check if recalculate preset on bookmark is enabled
+    //         const recalculatePreset = this.formattingSettings.presetsCard.recalculatePresetOnBookmark.value;
+    //         const bookmarkState = state;
 
-    
-    
-    
-    
-    
-    
-    
+    //         // CRITICAL FIX: For time-based presets, ALWAYS recalculate based on CURRENT date
+    //         // This ensures "yesterday" means today's yesterday, not the date from when bookmark was created
+
+    //         // First, try to get preset from bookmark state
+    //         let presetToUse: string | null = null;
+    //         if (bookmarkState && bookmarkState.lastPreset && bookmarkState.lastPreset !== "none") {
+    //             presetToUse = bookmarkState.lastPreset;
+    //             console.log("Bookmark restore - preset from bookmark state:", presetToUse);
+    //         } else {
+    //             // Fallback: Check if current format pane has a time-based preset set
+    //             // This handles cases where bookmark state might not have stored the preset correctly
+    //             const currentFormatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
+    //             if (currentFormatPanePreset && currentFormatPanePreset !== "none") {
+    //                 const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(currentFormatPanePreset);
+    //                 if (isTimeBased) {
+    //                     presetToUse = currentFormatPanePreset;
+    //                     console.log("Bookmark restore - using format pane preset as fallback:", presetToUse);
+    //                 }
+    //             }
+    //         }
+
+    //         // If we have a preset, check if it's time-based and should be recalculated
+    //         if (presetToUse) {
+    //             const isTimeBasedPreset = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(presetToUse);
+
+    //             console.log("Bookmark restore - preset analysis:", {
+    //                 preset: presetToUse,
+    //                 isTimeBasedPreset: isTimeBasedPreset,
+    //                 recalculateEnabled: recalculatePreset,
+    //                 willRecalculate: isTimeBasedPreset || recalculatePreset
+    //             });
+
+    //             // For time-based presets, ALWAYS recalculate (they should be dynamic)
+    //             // For data-bound presets (minDate, maxDate), respect the recalculatePresetOnBookmark setting
+    //             if (isTimeBasedPreset || recalculatePreset) {
+    //                 console.log("Recalculating preset on bookmark restore:", {
+    //                     preset: presetToUse,
+    //                     isTimeBasedPreset: isTimeBasedPreset,
+    //                     recalculateEnabled: recalculatePreset,
+    //                     currentDate: new Date().toISOString(),
+    //                     storedMinDate: bookmarkState?.selectedMinDate,
+    //                     storedMaxDate: bookmarkState?.selectedMaxDate
+    //                 });
+
+    //                 // Restore the preset setting so clearSelectionWithCurrentData uses it
+    //                 this.activePreset = presetToUse;
+    //                 this.lastPresetSetting = presetToUse;
+
+    //                 // IMPORTANT: Don't restore the old dates - let clearSelectionWithCurrentData calculate fresh dates
+    //                 // This ensures "yesterday" means today's yesterday, not the date from when bookmark was created
+
+    //                 // Call clearSelectionWithCurrentData which will recalculate the preset based on CURRENT data
+    //                 this.clearSelectionWithCurrentData();
+
+    //                 setTimeout(() => {
+    //                     this.isRestoringBookmark = false;
+    //                 }, 300);
+    //                 return; // CRITICAL: Return here to prevent restoring old dates below
+    //             } else {
+    //                 console.log("Preset found but not recalculating (data-bound preset with recalculate disabled):", {
+    //                     preset: presetToUse
+    //                 });
+    //             }
+    //         } else {
+    //             console.log("No preset found in bookmark state or format pane:", {
+    //                 hasBookmarkState: !!bookmarkState,
+    //                 bookmarkLastPreset: bookmarkState?.lastPreset,
+    //                 formatPanePreset: String(this.formattingSettings.presetsCard.preset.value)
+    //             });
+
+    //             // SAFEGUARD: Even if preset wasn't detected above, check format pane for time-based preset
+    //             // This ensures we don't restore old dates for time-based presets
+    //             const formatPanePreset = String(this.formattingSettings.presetsCard.preset.value);
+    //             if (formatPanePreset && formatPanePreset !== "none") {
+    //                 const isTimeBased = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(formatPanePreset);
+    //                 if (isTimeBased) {
+    //                     console.log("Safeguard: Format pane has time-based preset, recalculating:", formatPanePreset);
+    //                     this.lastPresetSetting = formatPanePreset;
+    //                     this.activePreset = formatPanePreset;
+    //                     this.clearSelectionWithCurrentData();
+    //                     setTimeout(() => {
+    //                         this.isRestoringBookmark = false;
+    //                     }, 300);
+    //                     return; // Don't restore old dates
+    //                 }
+    //             }
+    //         }
+
+
+    //         // CRITICAL SAFEGUARD: Before restoring ANY dates, check if bookmark has a time-based preset
+    //         // If it does, we MUST recalculate instead of restoring old dates
+    //         // This ensures that bookmarks with preset names always use current date, not stored dates
+    //         if (bookmarkState?.lastPreset && bookmarkState.lastPreset !== "none") {
+    //             const isTimeBasedPreset = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"].includes(bookmarkState.lastPreset);
+    //             if (isTimeBasedPreset) {
+    //                 console.log("CRITICAL: Bookmark has time-based preset - IGNORING stored dates and recalculating:", {
+    //                     preset: bookmarkState.lastPreset,
+    //                     storedDates: {
+    //                         min: bookmarkState.selectedMinDate,
+    //                         max: bookmarkState.selectedMaxDate
+    //                     },
+    //                     willRecalculate: true,
+    //                     currentDate: new Date().toISOString()
+    //                 });
+    //                 this.lastPresetSetting = bookmarkState.lastPreset;
+    //                 this.activePreset = bookmarkState.lastPreset;
+    //                 this.clearSelectionWithCurrentData();
+    //                 setTimeout(() => {
+    //                     this.isRestoringBookmark = false;
+    //                 }, 300);
+    //                 return; // NEVER restore old dates for time-based presets - always recalculate
+    //             }
+    //         }
+
+    //         // Restore dates from bookmark state
+    //         // NOTE: This will only execute if preset is NOT time-based or preset recalculation was skipped
+    //         // For time-based presets, we should have returned above
+    //         if (bookmarkState.selectedMinDate) {
+    //             this.selectedMinDate = new Date(bookmarkState.selectedMinDate);
+    //         }
+    //         if (bookmarkState.selectedMaxDate) {
+    //             this.selectedMaxDate = new Date(bookmarkState.selectedMaxDate);
+    //         }
+    //         if (bookmarkState.dataMinDate) {
+    //             this.dataMinDate = new Date(bookmarkState.dataMinDate);
+    //         }
+    //         if (bookmarkState.dataMaxDate) {
+    //             this.dataMaxDate = new Date(bookmarkState.dataMaxDate);
+    //         }
+    //         if (bookmarkState.lastPreset) {
+    //             this.activePreset = bookmarkState.lastPreset;
+    //             this.lastPresetSetting = bookmarkState.lastPreset;
+    //         }
+
+    //         // Apply the restored filter if we have a data source
+    //         // Note: currentDataSource might not be set yet if update hasn't run
+    //         // The filter will be applied when update runs if currentDataSource becomes available
+    //         // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
+    //         //     this.shouldApplyFilter = true;
+    //         //     this.isUserInitiatedChange = true;
+    //         //     console.log("Applying filter from bookmark restore:", {
+    //         //         min: this.selectedMinDate.toISOString(),
+    //         //         max: this.selectedMaxDate.toISOString()
+    //         //     });
+    //         //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
+    //         //     setTimeout(() => {
+    //         //         this.isUserInitiatedChange = false;
+    //         //     }, 100);
+    //         // } else {
+    //         //     // Data source not available yet - mark that we need to apply filter when update runs
+    //         //     console.log("Bookmark restored but data source not available yet - will apply filter on next update");
+    //         //     this.shouldApplyFilter = true;
+    //         //     this.isUserInitiatedChange = true;
+    //         // }
+
+
+    //         let minToApply: Date | null = null;
+    // let maxToApply: Date | null = null;
+
+    // // If we came from a bookmark AND you have dynamic preset range recalculated
+    // if (this.isRestoringBookmark && this.presetRangeForClear) {
+    //     minToApply = this.presetRangeForClear.from;
+    //     maxToApply = this.presetRangeForClear.to;
+
+    //     console.log("Using dynamic preset range after bookmark restore:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString(),
+    //         preset: this.activePreset
+    //     });
+    // } else {
+    //     // Normal behavior (manual selection or normal slider change)
+    //     minToApply = this.selectedMinDate;
+    //     maxToApply = this.selectedMaxDate;
+    // }
+
+    // if (this.currentDataSource && minToApply && maxToApply) {
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
+
+    //     console.log("Applying filter:", {
+    //         min: minToApply.toISOString(),
+    //         max: maxToApply.toISOString()
+    //     });
+
+    //     this.applyDateFilter(this.currentDataSource, minToApply, maxToApply);
+
+    //     setTimeout(() => {
+    //         this.isUserInitiatedChange = false;
+    //     }, 100);
+    // } else {
+    //     console.log("Data source not ready – will apply filter on next update");
+    //     this.shouldApplyFilter = true;
+    //     this.isUserInitiatedChange = true;
+    // }
+
+
+    //         // Update React component if it exists
+    //         if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+    //             this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
+    //         }
+
+    //         // Force re-render to show restored state
+    //         this.needsReRender = true;
+
+    //         // Safety timeout to clear the flag if update cycle doesn't run
+    //         // The update cycle will clear it earlier if it applies the filter
+    //         setTimeout(() => {
+    //             if (this.isRestoringBookmark) {
+    //                 this.isRestoringBookmark = false;
+    //                 this.isUserInitiatedChange = false;
+    //                 console.log("Bookmark restore flag cleared by safety timeout");
+    //             }
+    //         }, 500);
+    //     }
+
+
+
+
+
+
+
+
     // 🔑 Clear selection method for bookmark interaction
-   
 
-public restoreBookmarkState(state: any): void {
-    console.log("Restoring bookmark state:", state);
 
-    this.isRestoringBookmark = true;
+    public restoreBookmarkState(state: any): void {
+        console.log("Restoring bookmark state:", state);
+        console.log("WARNING: Power BI may have captured old dates. We will recalculate based on current date for time-based presets.");
 
-    // If this restore came from an external "clear filters" bookmark/button,
-    // immediately recalc the preset against current date/data and stop.
-    if (state?.isClearSelection) {
-        // Prefer the preset captured in the bookmark; otherwise fall back to the current format pane preset
-        const clearPreset = (state.lastPreset && state.lastPreset !== "none")
-            ? state.lastPreset
-            : String(this.formattingSettings.presetsCard.preset.value);
+        this.isRestoringBookmark = true;
 
-        if (clearPreset && clearPreset !== "none") {
-            this.lastPresetSetting = clearPreset;
-            this.activePreset = clearPreset;
+        // If this restore came from an external "clear filters" bookmark/button,
+        // immediately recalc the preset against current date/data and stop.
+        // This ensures clear button always uses CURRENT date, not bookmark creation date
+        if (state?.isClearSelection) {
+            console.log("Clear selection bookmark detected - will use CURRENT date, not bookmark creation date");
+            
+            // Prefer the preset captured in the bookmark; otherwise fall back to the current format pane preset
+            const clearPreset = (state.lastPreset && state.lastPreset !== "none")
+                ? state.lastPreset
+                : String(this.formattingSettings.presetsCard.preset.value);
+
+            if (clearPreset && clearPreset !== "none") {
+                this.lastPresetSetting = clearPreset;
+                this.activePreset = clearPreset;
+            }
+
+            // Always recalc using live date/data; applies filter to other visuals if possible
+            // This ensures we use TODAY's date, not the date when bookmark was created
+            this.clearSelectionWithCurrentData();
+
+            // Ensure flags are cleared so subsequent updates behave normally
+            setTimeout(() => {
+                this.isRestoringBookmark = false;
+                this.isUserInitiatedChange = false;
+            }, 150);
+
+            return;
         }
 
-        // Always recalc using live date/data; applies filter to other visuals if possible
-        this.clearSelectionWithCurrentData();
+        // Determine preset from bookmark / active / format pane
+        const presetFromBookmark = state?.lastPreset;
+        const presetFromActive = this.activePreset;
+        const presetFromFormatPane = String(this.formattingSettings.presetsCard.preset.value);
+        const detectedPreset = presetFromBookmark || presetFromActive || (presetFromFormatPane !== "none" ? presetFromFormatPane : null);
 
-        // Ensure flags are cleared so subsequent updates behave normally
+
+        console.log("presetFromBookmark", presetFromBookmark)
+        console.log("presetFromActive ", presetFromActive)
+        console.log("presetFromActive ", presetFromActive)
+        console.log("presetFromActive ", presetFromActive)
+
+        // Check if time-based preset
+        const timeBasedPresets = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"];
+        const isTimeBased = detectedPreset && timeBasedPresets.includes(detectedPreset);
+
+        // CRITICAL: For time-based presets, ALWAYS recalculate based on current date
+        // NEVER use dates from bookmark state - Power BI may have captured old dates
+        if (isTimeBased) {
+            console.log("Time-based preset detected - recalculating based on CURRENT date:", detectedPreset);
+            console.log("IGNORING Power BI captured dates (will use live calculation):", {
+                capturedMinDate: state?.selectedMinDate,
+                capturedMaxDate: state?.selectedMaxDate
+            });
+
+            // Recalculate preset range dynamically (always live date)
+            // CRITICAL: Never use old dates from bookmark state for time-based presets
+            const presetRange = this.calculatePresetRange(detectedPreset);
+            if (presetRange) {
+                // Force use of recalculated dates - ignore any dates Power BI might have stored
+                this.selectedMinDate = presetRange.from;
+                this.selectedMaxDate = presetRange.to;
+                this.presetRangeForClear = presetRange;
+
+                // Reset manual selection and record preset
+                this.hasManualSelection = false;
+                this.activePreset = detectedPreset;
+                this.lastPresetSetting = detectedPreset;
+
+                // Always mark for filter application; if data source is ready, apply now
+                this.shouldApplyFilter = true;
+                this.isUserInitiatedChange = true; // force apply in update path too
+
+                if (this.currentDataSource) {
+                    this.applyDateFilter(this.currentDataSource, presetRange.from, presetRange.to);
+                } else {
+                    console.log("Time-based preset restore: data source not ready, will apply in update()");
+                    this.needsReRender = true;
+                }
+
+                // Update slider / React component immediately with recalculated dates
+                if (this.reactSliderWrapper) {
+                    this.reactSliderWrapper.updateDates(presetRange.from, presetRange.to, presetRange);
+                }
+
+                // Keep isRestoringBookmark true; update() will clear it after applying filter
+                return; // never restore old bookmark dates - always use live calculation
+            }
+        }
+
+        // For non-time-based presets, check if Power BI stored dates
+        // If dates exist in state, they might be from Power BI's filter capture
+        // Only use them if they're reasonable (not from bookmark creation day)
+        if (state.selectedMinDate && state.selectedMaxDate) {
+            const stateMinDate = new Date(state.selectedMinDate);
+            const stateMaxDate = new Date(state.selectedMaxDate);
+            
+            // Check if these dates are likely from Power BI's filter capture (not our bookmark state)
+            // If we have a preset, prefer recalculating it instead of using old dates
+            if (detectedPreset && detectedPreset !== "none") {
+                console.log("Non-time-based preset detected - recalculating instead of using Power BI captured dates:", detectedPreset);
+                const presetRange = this.calculatePresetRange(detectedPreset);
+                if (presetRange) {
+                    this.selectedMinDate = presetRange.from;
+                    this.selectedMaxDate = presetRange.to;
+                    this.presetRangeForClear = presetRange;
+                } else {
+                    // Fallback to state dates if preset calculation fails
+                    this.selectedMinDate = stateMinDate;
+                    this.selectedMaxDate = stateMaxDate;
+                }
+            } else {
+                // No preset - use dates from state
+                this.selectedMinDate = stateMinDate;
+                this.selectedMaxDate = stateMaxDate;
+            }
+        }
+        
+        // Restore data bounds if available
+        if (state.dataMinDate) this.dataMinDate = new Date(state.dataMinDate);
+        if (state.dataMaxDate) this.dataMaxDate = new Date(state.dataMaxDate);
+        
+        // Restore preset info
+        if (state.lastPreset && state.lastPreset !== "none") {
+            this.activePreset = state.lastPreset;
+            this.lastPresetSetting = state.lastPreset;
+        }
+
+        // Apply restored filter
+        if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
+            this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
+            this.shouldApplyFilter = true;
+            this.isUserInitiatedChange = true;
+        }
+
+        // Update React slider
+        if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+            this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
+        }
+
         setTimeout(() => {
             this.isRestoringBookmark = false;
             this.isUserInitiatedChange = false;
-        }, 150);
-
-        return;
+        }, 300);
     }
 
-    // Determine preset from bookmark / active / format pane
-    const presetFromBookmark = state?.lastPreset;
-    const presetFromActive = this.activePreset;
-    const presetFromFormatPane = String(this.formattingSettings.presetsCard.preset.value);
-    const detectedPreset = presetFromBookmark || presetFromActive || (presetFromFormatPane !== "none" ? presetFromFormatPane : null);
-
-    // Check if time-based preset
-    const timeBasedPresets = ["today", "yesterday", "last3days", "last7Days", "last30Days", "thisMonth", "lastMonth"];
-    const isTimeBased = detectedPreset && timeBasedPresets.includes(detectedPreset);
-
-    if (isTimeBased) {
-        console.log("Time-based preset detected - recalculating based on current date:", detectedPreset);
-
-        // Recalculate preset range dynamically (always live date)
-        const presetRange = this.calculatePresetRange(detectedPreset);
-        if (presetRange) {
-            this.selectedMinDate = presetRange.from;
-            this.selectedMaxDate = presetRange.to;
-            this.presetRangeForClear = presetRange;
-
-            // Reset manual selection and record preset
-            this.hasManualSelection = false;
-            this.activePreset = detectedPreset;
-            this.lastPresetSetting = detectedPreset;
-
-            // Always mark for filter application; if data source is ready, apply now
-            this.shouldApplyFilter = true;
-            this.isUserInitiatedChange = true; // force apply in update path too
-
-            if (this.currentDataSource) {
-                this.applyDateFilter(this.currentDataSource, presetRange.from, presetRange.to);
-            } else {
-                console.log("Time-based preset restore: data source not ready, will apply in update()");
-                this.needsReRender = true;
-            }
-
-            // Update slider / React component immediately
-            if (this.reactSliderWrapper) {
-                this.reactSliderWrapper.updateDates(presetRange.from, presetRange.to);
-            }
-
-            // Keep isRestoringBookmark true; update() will clear it after applying filter
-            return; // never restore old bookmark dates
-        }
-    }
-
-    // If not time-based preset, restore selected dates from bookmark
-    if (state.selectedMinDate) this.selectedMinDate = new Date(state.selectedMinDate);
-    if (state.selectedMaxDate) this.selectedMaxDate = new Date(state.selectedMaxDate);
-    if (state.dataMinDate) this.dataMinDate = new Date(state.dataMinDate);
-    if (state.dataMaxDate) this.dataMaxDate = new Date(state.dataMaxDate);
-    if (state.lastPreset && state.lastPreset !== "none") {
-        this.activePreset = state.lastPreset;
-        this.lastPresetSetting = state.lastPreset;
-    }
-
-    // Apply restored filter
-    if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-        this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-        this.shouldApplyFilter = true;
-        this.isUserInitiatedChange = true;
-    }
-
-    // Update React slider
-    if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
-        this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);
-    }
-
-    setTimeout(() => {
-        this.isRestoringBookmark = false;
-        this.isUserInitiatedChange = false;
-    }, 300);
-}
 
 
-   
-   
-   
-   
+
+
+
     public clearSelection(): void {
-        // Reset to current preset if available, otherwise reset to data bounds
-        const selectedPreset = String(this.formattingSettings.presetsCard.preset.value);
+        // Prefer the last preset (bookmark/format pane) and recalc live range
+        const selectedPreset = this.lastPresetSetting || String(this.formattingSettings.presetsCard.preset.value);
         const presetRange = (selectedPreset && selectedPreset !== "none") ? this.calculatePresetRange(selectedPreset) : null;
-        
+
         if (presetRange) {
             this.selectedMinDate = presetRange.from;
             this.selectedMaxDate = presetRange.to;
-            // Update activePreset tracking
             this.activePreset = selectedPreset;
             this.lastPresetSetting = selectedPreset;
-            // Clearing preset selection removes any manual override
             this.hasManualSelection = false;
-            
-            console.log("clearSelectionWithCurrentData - dates set:", {
+
+            console.log("clearSelection - live preset applied:", {
                 preset: selectedPreset,
                 selectedMinDate: this.selectedMinDate.toISOString(),
                 selectedMaxDate: this.selectedMaxDate.toISOString(),
@@ -2036,49 +2079,30 @@ public restoreBookmarkState(state: any): void {
             this.hasManualSelection = false;
         }
 
-        // Apply the filter when clearing selection (user-initiated action)
-        // if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
-        //     this.shouldApplyFilter = true;
-        //     this.isUserInitiatedChange = true;
-        //     this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
-        //     setTimeout(() => {
-        //         this.isUserInitiatedChange = false;
-        //     }, 100);
-        // }
-
-
-        if (this.currentDataSource) {
-    // If preset exists and we are restoring a bookmark → use dynamic preset dates
-    const usePresetRange =
-        this.isRestoringBookmark && this.presetRangeForClear;
-
-    const minDateToApply = usePresetRange
-        ? this.presetRangeForClear!.from
-        : this.selectedMinDate;
-
-    const maxDateToApply = usePresetRange
-        ? this.presetRangeForClear!.to
-        : this.selectedMaxDate;
-
-    if (minDateToApply && maxDateToApply) {
-        this.shouldApplyFilter = true;
-        this.isUserInitiatedChange = true;
-
-        this.applyDateFilter(
-            this.currentDataSource,
-            minDateToApply,
-            maxDateToApply
-        );
-
-        setTimeout(() => {
-            this.isUserInitiatedChange = false;
-        }, 100);
-    }
-}
-
+        // Apply the filter using the live preset range (or bounds)
+        if (this.currentDataSource && this.selectedMinDate && this.selectedMaxDate) {
+            this.shouldApplyFilter = true;
+            this.isUserInitiatedChange = true;
+            this.applyDateFilter(this.currentDataSource, this.selectedMinDate, this.selectedMaxDate);
+            setTimeout(() => {
+                this.isUserInitiatedChange = false;
+            }, 100);
+        } else {
+            // Defer application to update()
+            this.shouldApplyFilter = true;
+            this.isUserInitiatedChange = true;
+            this.needsReRender = true;
+        }
 
         // Force re-render
         this.needsReRender = true;
+
+        // Update React component immediately to sync currentMinDate and currentMaxDate with presetRange
+        if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
+            // Store the presetRange for use in updateDates
+            this.presetRangeForClear = presetRange;
+            this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate, presetRange);
+        }
     }
 
     // 🔑 Clear selection method that always uses CURRENT data (for live data scenarios)
@@ -2088,13 +2112,13 @@ public restoreBookmarkState(state: any): void {
     // This prevents using old bookmark dates when new live data arrives
     private clearSelectionWithCurrentData(): void {
         console.log("Clearing selection with current data - recalculating preset based on latest dates/data");
-        
+
         // Use the preset from lastPresetSetting if available (from bookmark), 
         // otherwise use the CURRENT preset setting from format pane
         // This ensures that when restoring a bookmark with a preset, we use the bookmark's preset
         // but recalculate it based on CURRENT date/data
         const selectedPreset = this.lastPresetSetting || String(this.formattingSettings.presetsCard.preset.value);
-        
+
         console.log("clearSelectionWithCurrentData - preset source:", {
             usingBookmarkPreset: !!this.lastPresetSetting,
             bookmarkPreset: this.lastPresetSetting,
@@ -2102,13 +2126,13 @@ public restoreBookmarkState(state: any): void {
             selectedPreset: selectedPreset,
             currentDate: new Date().toISOString()
         });
-        
+
         // Recalculate preset range - this will use:
         // - Current date (new Date()) for time-based presets (today, yesterday, last3days, etc.)
         // - Current data bounds (this.dataMinDate/this.dataMaxDate) for data-bound presets (minDate, maxDate)
         // - Clamping logic ensures all presets respect current data bounds
         const presetRange = (selectedPreset && selectedPreset !== "none") ? this.calculatePresetRange(selectedPreset) : null;
-        
+
         if (presetRange) {
             // Use the recalculated range for all preset types
             // calculatePresetRange already handles:
@@ -2117,13 +2141,13 @@ public restoreBookmarkState(state: any): void {
             // - Clamping: ensures range respects current data bounds
             this.selectedMinDate = presetRange.from;
             this.selectedMaxDate = presetRange.to;
-            
+
             // Update activePreset tracking
             this.activePreset = selectedPreset;
             this.lastPresetSetting = selectedPreset;
             // Clearing preset selection removes any manual override
             this.hasManualSelection = false;
-            
+
             console.log("Preset recalculated for clear filter (all preset types supported):", {
                 preset: selectedPreset,
                 minDate: this.selectedMinDate.toISOString(),
@@ -2137,7 +2161,7 @@ public restoreBookmarkState(state: any): void {
             this.selectedMaxDate = this.dataMaxDate;
             this.activePreset = null;
             this.hasManualSelection = false;
-            
+
             console.log("No preset - using current data bounds:", {
                 minDate: this.selectedMinDate?.toISOString(),
                 maxDate: this.selectedMaxDate?.toISOString()
@@ -2157,37 +2181,37 @@ public restoreBookmarkState(state: any): void {
 
 
         if (this.currentDataSource) {
-    // Choose dynamic preset first (live date), fallback to manual selection
-    const minDateToApply =
-        this.presetRangeForClear?.from && this.isRestoringBookmark
-            ? this.presetRangeForClear.from
-            : this.selectedMinDate;
+            // Choose dynamic preset first (live date), fallback to manual selection
+            const minDateToApply =
+                this.presetRangeForClear?.from && this.isRestoringBookmark
+                    ? this.presetRangeForClear.from
+                    : this.selectedMinDate;
 
-    const maxDateToApply =
-        this.presetRangeForClear?.to && this.isRestoringBookmark
-            ? this.presetRangeForClear.to
-            : this.selectedMaxDate;
+            const maxDateToApply =
+                this.presetRangeForClear?.to && this.isRestoringBookmark
+                    ? this.presetRangeForClear.to
+                    : this.selectedMaxDate;
 
-    if (minDateToApply && maxDateToApply) {
-        this.shouldApplyFilter = true;
-        this.isUserInitiatedChange = true;
+            if (minDateToApply && maxDateToApply) {
+                this.shouldApplyFilter = true;
+                this.isUserInitiatedChange = true;
 
-        this.applyDateFilter(
-            this.currentDataSource,
-            minDateToApply,
-            maxDateToApply
-        );
+                this.applyDateFilter(
+                    this.currentDataSource,
+                    minDateToApply,
+                    maxDateToApply
+                );
 
-        setTimeout(() => {
-            this.isUserInitiatedChange = false;
-        }, 100);
-    }
-}
+                setTimeout(() => {
+                    this.isUserInitiatedChange = false;
+                }, 100);
+            }
+        }
 
 
         // Force re-render
         this.needsReRender = true;
-        
+
         // Update React component if it exists
         if (this.reactSliderWrapper && this.selectedMinDate && this.selectedMaxDate) {
             this.reactSliderWrapper.updateDates(this.selectedMinDate, this.selectedMaxDate);

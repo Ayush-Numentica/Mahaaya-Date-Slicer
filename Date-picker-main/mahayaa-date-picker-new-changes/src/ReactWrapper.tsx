@@ -38,12 +38,13 @@ export class ReactSliderWrapper {
     );
   }
 
-  updateDates(minDate: Date, maxDate: Date) {
+  updateDates(minDate: Date, maxDate: Date, presetRange?: { from: Date; to: Date } | null) {
     if (this.currentProps) {
       const updatedProps = {
         ...this.currentProps,
         currentMinDate: minDate,
-        currentMaxDate: maxDate
+        currentMaxDate: maxDate,
+        ...(presetRange !== undefined && { presetRange })
       };
       this.currentProps = updatedProps;
       console.log('updated props', updatedProps);
