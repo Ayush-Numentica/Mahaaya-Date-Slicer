@@ -77,10 +77,15 @@ class PresetsCardSettings extends FormattingSettingsCard {
         displayName: "Pop Up Mode",
         value: false
     });
+    recalculatePresetOnBookmark = new formattingSettings.ToggleSwitch({
+        name: "recalculatePresetOnBookmark",
+        displayName: "Recalculate preset on bookmark restore",
+        value: true
+    });
 
     name: string = "presets";     // must match capabilities.json
     displayName: string = "Presets";
-    slices: Array<FormattingSettingsSlice> = [this.toShowHeader,this.preset, this.selectionStyle,this.toggleOption];
+    slices: Array<FormattingSettingsSlice> = [this.toShowHeader,this.preset, this.selectionStyle,this.toggleOption, this.recalculatePresetOnBookmark];
 }
 
 

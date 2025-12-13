@@ -4,7 +4,7 @@
     "displayName": "Mahaaya Super Date Slicer",
     "guid": "slicer25FFE7327DD94242A1F24F6D86AB166E",
     "visualClassName": "Visual",
-    "version": "1.0.0.0",
+    "version": "1.0.0.2",
     "description": "Date slicer visual for Power BI",
     "supportUrl": "https://support.url",
     "gitHubUrl": "https://github.com/your-repo"
@@ -22,5 +22,5 @@
   "capabilities": "capabilities.json",
   "dependencies": null,
   "stringResources": [],
-  "version": "1.0.0.0"
+  "version": "1.0.0.2"
 }

@@ -15,7 +15,9 @@
                         "in": "date"
                     },
                     "dataReductionAlgorithm": {
-                        "top": {}
+                        "top": {
+                            "count": 30000
+                        }
                     }
                 }
             }
@@ -152,6 +154,12 @@
                 },
                 "toggleOption": {
                     "displayName": "Pop Up Mode",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "recalculatePresetOnBookmark": {
+                    "displayName": "Recalculate preset on bookmark restore",
                     "type": {
                         "bool": true
                     }
