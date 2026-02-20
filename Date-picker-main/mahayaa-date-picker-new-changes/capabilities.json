@@ -23,6 +23,7 @@
             }
         }
     ],
+    "supportsSynchronizingFilterState":true,
     "objects": {
         "general": {
             "displayName": "General",

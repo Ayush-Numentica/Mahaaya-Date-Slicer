@@ -328,13 +328,12 @@ const DateRangePickerWithSlider: React.FC<DateRangeSliderProps> = memo(
                 month: month,
                 onMonthChange: setMonth,
                 onSelect: (selectedRange: { from?: Date; to?: Date } | undefined) => {
-                  console.log("Selected range:", selectedRange);
+                  
                   
                   if (selectedRange) {
                     const normalizedFrom = selectedRange.from || selectedRange.to;
                     const normalizedTo = selectedRange.to || selectedRange.from;
-                    console.log("pickeddate from:", normalizedFrom);
-                    console.log("pickeddate to:", normalizedTo);
+                    
 
                     // Update range state with the selected range
                     setRange({
